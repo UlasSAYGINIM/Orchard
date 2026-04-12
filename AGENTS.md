@@ -55,7 +55,7 @@ $env:PATH = "C:\Users\luism\AppData\Roaming\Python\Python311\Scripts;C:\Users\lu
 ctest --preset default
 ```
 
-Run the inspect stub:
+Run `orchard-inspect`:
 
 ```powershell
 $env:PATH = "C:\Users\luism\AppData\Roaming\Python\Python311\Scripts;C:\Users\luism\miniconda3\Library\bin;C:\Users\luism\miniconda3\Library\x86_64-w64-mingw32\bin;$env:PATH"
@@ -83,12 +83,30 @@ $env:PATH = "C:\Users\luism\AppData\Roaming\Python\Python311\Scripts;C:\Users\lu
 cmake --build --preset default --target orchard_lint
 ```
 
+Regenerate synthetic sample fixtures:
+
+```powershell
+.\tests\corpus\generate-sample-fixtures.ps1
+```
+
 ## M0 notes
 
-- `orchard-inspect` is intentionally small and deterministic. It currently classifies a target path, probes for the `NXSB` APFS container magic in regular files, and emits structured JSON output.
+- `orchard-inspect` started as an M0 stub, but it is now a real offline inspector for direct-container and GPT-wrapped synthetic APFS fixtures.
 - The fixture manifest is JSON and is validated with a CMake script so the repo does not take on a JSON library dependency during M0.
 - `tests/fuzz/orchard_fuzz_smoke.cpp` is a scaffold target, not a full fuzzing setup. Real fuzzers should replace it in M1 and M5.
 - CI baseline lives in `.github/workflows/ci.yml` and runs `cmake --preset default`, `cmake --build --preset default --parallel`, and `ctest --preset default` on `windows-latest`.
 - Formatting is driven by `.clang-format` and `tools/dev/orchard-format.ps1`.
 - Static analysis is driven by `.clang-tidy` and `tools/dev/orchard-lint.ps1`.
+- The maintenance scripts skip tracked files that have been deleted from the worktree, which matters after test-file renames.
 - The lint wrapper treats `clang-tidy` failures as hard failures; do not rely on its console output alone.
+
+## M1 notes
+
+- `src/blockio` now exposes a typed, synchronous reader interface with Windows handle-backed file/raw-device support and an in-memory backend for tests.
+- `src/apfs-core/src/discovery.cpp` currently supports:
+  - direct APFS container detection via `NXSB`
+  - GPT header parsing and APFS partition discovery
+  - checkpoint selection by scanning the main superblock plus the checkpoint descriptor area for the highest `xid`
+  - minimal container and volume superblock parsing for feature flags, UUIDs, and volume roles
+- Volume superblock enumeration is intentionally temporary: Orchard uses a bounded fallback block scan keyed by `fs_oid` values until object-map traversal lands in `M1-T04`.
+- When collecting verification evidence, do not run `cmake --build` and `ctest` in parallel. Running them concurrently can produce misleading failures against stale executables.

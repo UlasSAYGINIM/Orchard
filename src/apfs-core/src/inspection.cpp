@@ -1,77 +1,110 @@
 #include "orchard/apfs/inspection.h"
 
-#include <array>
-#include <fstream>
+#include <utility>
 
-#include "orchard/apfs/probe.h"
+#include "orchard/blockio/reader.h"
 
 namespace orchard::apfs {
+namespace {
 
-StubInspectionResult RunStubInspection(const blockio::InspectionTargetInfo& target_info) {
-  StubInspectionResult result;
-  result.notes.push_back("Stub inspection only. Full APFS parsing begins in M1.");
-
-  switch (target_info.kind) {
-  case blockio::TargetKind::kMissing:
-    result.status = ProbeStatus::kMissingTarget;
-    result.notes.push_back("Target path does not exist or could not be resolved.");
-    return result;
-
-  case blockio::TargetKind::kDirectory:
-    result.status = ProbeStatus::kUnsupportedTarget;
-    result.notes.push_back("Directories are not probe targets. Use a disk path or image file.");
-    return result;
-
-  case blockio::TargetKind::kRawDevice:
-    result.status = ProbeStatus::kNotImplemented;
-    result.notes.push_back("Raw-device probing is planned but not implemented in the M0 stub.");
-    result.suggested_mount_mode = "unknown";
-    return result;
-
-  case blockio::TargetKind::kUnknown:
-    result.status = ProbeStatus::kUnsupportedTarget;
-    result.notes.push_back("Target kind is not supported by the stub inspection path.");
-    return result;
-
-  case blockio::TargetKind::kRegularFile:
-    break;
-  }
-
-  std::ifstream stream(target_info.path, std::ios::binary);
-  if (!stream) {
-    result.status = ProbeStatus::kOpenFailed;
-    result.notes.push_back("Failed to open the target file.");
-    return result;
-  }
-
-  std::array<std::uint8_t, 4> header{};
-  stream.read(reinterpret_cast<char*>(header.data()), static_cast<std::streamsize>(header.size()));
-
-  result.status = ProbeStatus::kStubScanned;
-  result.apfs_container_magic_present = ProbeContainerMagic(header);
-  result.suggested_mount_mode = result.apfs_container_magic_present ? "unknown" : "reject";
-
-  if (result.apfs_container_magic_present) {
-    result.notes.push_back("Detected APFS container magic at offset 0.");
-  } else {
-    result.notes.push_back("APFS container magic was not detected at offset 0.");
-  }
-
+InspectionResult MakeStatusOnly(const InspectionStatus status, std::string note) {
+  InspectionResult result;
+  result.status = status;
+  result.notes.push_back(std::move(note));
   return result;
 }
 
-std::string_view ToString(ProbeStatus status) noexcept {
+InspectionStatus MapErrorToStatus(const blockio::ErrorCode code) noexcept {
+  switch (code) {
+  case blockio::ErrorCode::kReadFailed:
+  case blockio::ErrorCode::kShortRead:
+  case blockio::ErrorCode::kOutOfRange:
+  case blockio::ErrorCode::kIoctlFailed:
+    return InspectionStatus::kReadFailed;
+  case blockio::ErrorCode::kInvalidFormat:
+  case blockio::ErrorCode::kCorruptData:
+    return InspectionStatus::kParseFailed;
+  case blockio::ErrorCode::kNotFound:
+  case blockio::ErrorCode::kAccessDenied:
+  case blockio::ErrorCode::kOpenFailed:
+  case blockio::ErrorCode::kUnsupportedTarget:
+  case blockio::ErrorCode::kInvalidArgument:
+  case blockio::ErrorCode::kNotImplemented:
+    return InspectionStatus::kOpenFailed;
+  }
+
+  return InspectionStatus::kOpenFailed;
+}
+
+} // namespace
+
+InspectionResult InspectTarget(const blockio::InspectionTargetInfo& target_info) {
+  switch (target_info.kind) {
+  case blockio::TargetKind::kMissing:
+    return MakeStatusOnly(InspectionStatus::kMissingTarget,
+                          "Target path does not exist or could not be resolved.");
+  case blockio::TargetKind::kDirectory:
+    return MakeStatusOnly(InspectionStatus::kUnsupportedTarget,
+                          "Directories are not valid APFS inspection targets.");
+  case blockio::TargetKind::kUnknown:
+    return MakeStatusOnly(InspectionStatus::kUnsupportedTarget,
+                          "Target kind is not supported by the inspection path.");
+  case blockio::TargetKind::kRegularFile:
+  case blockio::TargetKind::kRawDevice:
+    break;
+  }
+
+  InspectionResult result;
+
+  auto reader_result = blockio::OpenReader(target_info);
+  if (!reader_result.ok()) {
+    result.status = InspectionStatus::kOpenFailed;
+    result.error = reader_result.error();
+    result.notes.push_back(reader_result.error().message);
+    return result;
+  }
+
+  auto reader = std::move(reader_result).value();
+  result.reader_backend = std::string(reader->backend_name());
+
+  auto size_result = reader->size_bytes();
+  if (size_result.ok()) {
+    result.reader_size_bytes = size_result.value();
+  } else {
+    result.notes.push_back("Reader size is not available; discovery will use bounded scans.");
+  }
+
+  auto discovery_result = Discover(*reader);
+  if (!discovery_result.ok()) {
+    result.status = MapErrorToStatus(discovery_result.error().code);
+    result.error = discovery_result.error();
+    result.notes.push_back(discovery_result.error().message);
+    return result;
+  }
+
+  result.report = std::move(discovery_result.value());
+  result.notes.insert(result.notes.end(), result.report.notes.begin(), result.report.notes.end());
+  result.status = result.report.containers.empty() ? InspectionStatus::kNoApfsContainer
+                                                   : InspectionStatus::kSuccess;
+  return result;
+}
+
+std::string_view ToString(const InspectionStatus status) noexcept {
   switch (status) {
-  case ProbeStatus::kMissingTarget:
+  case InspectionStatus::kMissingTarget:
     return "missing_target";
-  case ProbeStatus::kUnsupportedTarget:
+  case InspectionStatus::kUnsupportedTarget:
     return "unsupported_target";
-  case ProbeStatus::kNotImplemented:
-    return "not_implemented";
-  case ProbeStatus::kOpenFailed:
+  case InspectionStatus::kOpenFailed:
     return "open_failed";
-  case ProbeStatus::kStubScanned:
-    return "stub_scanned";
+  case InspectionStatus::kReadFailed:
+    return "read_failed";
+  case InspectionStatus::kParseFailed:
+    return "parse_failed";
+  case InspectionStatus::kNoApfsContainer:
+    return "no_apfs_container";
+  case InspectionStatus::kSuccess:
+    return "success";
   }
 
   return "unsupported_target";

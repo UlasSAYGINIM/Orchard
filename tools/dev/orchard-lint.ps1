@@ -37,6 +37,9 @@ if (-not $files) {
 
 foreach ($relativePath in $files) {
   $fullPath = Join-Path $repoRoot $relativePath
+  if (-not (Test-Path $fullPath)) {
+    continue
+  }
   & $clangTidy "--quiet" "-p=$resolvedBuildDir" $fullPath
   if ($LASTEXITCODE -ne 0) {
     throw "clang-tidy failed for '$relativePath'."

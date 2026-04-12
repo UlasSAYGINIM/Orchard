@@ -7,10 +7,17 @@ orchard_add_cpp_test(
 )
 
 orchard_add_cpp_test(
+  orchard_unit_blockio_reader
+  SOURCES
+    reader_tests.cpp
+  LIBRARIES
+    orchard_blockio
+)
+
+orchard_add_cpp_test(
   orchard_unit_apfs
   SOURCES
-    probe_tests.cpp
+    apfs_tests.cpp
   LIBRARIES
     orchard_apfs_core
 )
-

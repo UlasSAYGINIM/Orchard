@@ -1,7 +1,9 @@
 add_library(
   orchard_blockio
   STATIC
+    src/error.cpp
     src/inspection_target.cpp
+    src/reader.cpp
 )
 
 target_include_directories(
@@ -11,4 +13,3 @@ target_include_directories(
 )
 
 orchard_configure_target(orchard_blockio)
-

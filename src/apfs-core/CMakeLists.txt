@@ -1,6 +1,7 @@
 add_library(
   orchard_apfs_core
   STATIC
+    src/discovery.cpp
     src/inspection.cpp
     src/probe.cpp
 )
@@ -18,4 +19,3 @@ target_link_libraries(
 )
 
 orchard_configure_target(orchard_apfs_core)
-

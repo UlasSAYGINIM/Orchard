@@ -1,3 +1,4 @@
+#include <array>
 #include <filesystem>
 #include <fstream>
 
@@ -21,8 +22,7 @@ void DetectsRegularFiles() {
   ORCHARD_TEST_REQUIRE(info.probe_candidate);
   ORCHARD_TEST_REQUIRE(info.kind == orchard::blockio::TargetKind::kRegularFile);
   ORCHARD_TEST_REQUIRE(info.size_bytes.has_value());
-  const auto size_bytes = info.size_bytes.value_or(0);
-  ORCHARD_TEST_REQUIRE(size_bytes == 7U);
+  ORCHARD_TEST_REQUIRE(info.size_bytes.value_or(0) == 7U);
 
   std::filesystem::remove(temp_path);
 }

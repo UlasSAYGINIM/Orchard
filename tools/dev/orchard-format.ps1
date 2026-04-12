@@ -32,6 +32,9 @@ if ($Check) {
 
 foreach ($relativePath in $files) {
   $fullPath = Join-Path $repoRoot $relativePath
+  if (-not (Test-Path $fullPath)) {
+    continue
+  }
   & $clangFormat @commonArgs $fullPath
   if ($LASTEXITCODE -ne 0) {
     throw "clang-format failed for '$relativePath'."

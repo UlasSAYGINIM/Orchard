@@ -2,8 +2,8 @@
   "schema_version": 1,
   "fixtures": [
     {
-      "id": "plain-user-data-placeholder",
-      "label": "Plain user-data placeholder",
+      "id": "plain-user-data-direct",
+      "label": "Plain user-data direct container",
       "source_type": "image_file",
       "relative_path": "tests/corpus/samples/plain-user-data.img",
       "volume_role": "user_data",
@@ -12,13 +12,28 @@
       "snapshots": "absent",
       "system_volume_group": "none",
       "compression_algorithms": ["none"],
-      "feature_flags": ["baseline_stub"],
+      "feature_flags": ["synthetic", "direct_container"],
       "expected_policy": "MountReadWrite",
-      "notes": "M0 placeholder fixture used to verify repo plumbing."
+      "notes": "Synthetic APFS-like direct container used for M1 reader, checkpoint, and volume parsing tests."
     },
     {
-      "id": "snapshot-volume-placeholder",
-      "label": "Snapshot-bearing placeholder",
+      "id": "gpt-user-data",
+      "label": "GPT user-data container",
+      "source_type": "image_file",
+      "relative_path": "tests/corpus/samples/gpt-user-data.img",
+      "volume_role": "user_data",
+      "case_mode": "case_insensitive",
+      "encryption": "none",
+      "snapshots": "absent",
+      "system_volume_group": "none",
+      "compression_algorithms": ["none"],
+      "feature_flags": ["synthetic", "gpt_partitioned"],
+      "expected_policy": "MountReadWrite",
+      "notes": "Synthetic GPT-wrapped APFS-like fixture used to validate partition discovery."
+    },
+    {
+      "id": "snapshot-volume-synthetic",
+      "label": "Snapshot-bearing synthetic volume",
       "source_type": "image_file",
       "relative_path": "tests/corpus/samples/snapshot-volume.img",
       "volume_role": "user_data",
@@ -26,14 +41,14 @@
       "encryption": "none",
       "snapshots": "present",
       "system_volume_group": "none",
-      "compression_algorithms": ["zlib"],
-      "feature_flags": ["snapshots_present"],
+      "compression_algorithms": ["none"],
+      "feature_flags": ["synthetic", "dataless_snapshots"],
       "expected_policy": "MountReadOnly",
-      "notes": "Represents the future v1 policy for snapshot-bearing user volumes."
+      "notes": "Synthetic APFS-like volume with snapshot-related incompatible flags for policy work."
     },
     {
-      "id": "sealed-system-placeholder",
-      "label": "Sealed system placeholder",
+      "id": "sealed-system-synthetic",
+      "label": "Sealed system synthetic volume",
       "source_type": "image_file",
       "relative_path": "tests/corpus/samples/sealed-system.img",
       "volume_role": "system",
@@ -41,11 +56,10 @@
       "encryption": "none",
       "snapshots": "present",
       "system_volume_group": "paired",
-      "compression_algorithms": ["lzfse"],
-      "feature_flags": ["sealed", "firmlink_group"],
+      "compression_algorithms": ["none"],
+      "feature_flags": ["synthetic", "sealed"],
       "expected_policy": "Reject",
-      "notes": "Represents a modern macOS system volume kept out of the v1 writable tier."
+      "notes": "Synthetic APFS-like system volume with sealed metadata for future policy checks."
     }
   ]
 }
-
