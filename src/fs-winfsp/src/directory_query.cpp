@@ -9,16 +9,21 @@
 namespace orchard::fs_winfsp {
 namespace {
 
-std::string ComposeChildPath(const std::string_view parent, const std::string_view child) {
-  if (parent == "/") {
-    return std::string("/") + std::string(child);
+struct ChildPathRequest {
+  std::string_view parent;
+  std::string_view child;
+};
+
+std::string ComposeChildPath(const ChildPathRequest& request) {
+  if (request.parent == "/") {
+    return std::string("/") + std::string(request.child);
   }
 
-  std::string path(parent);
+  std::string path(request.parent);
   if (path.empty() || path.back() != '/') {
     path.push_back('/');
   }
-  path.append(child);
+  path.append(request.child);
   return path;
 }
 
@@ -45,8 +50,11 @@ BuildDirectoryQueryEntries(const orchard::apfs::VolumeContext& volume,
     FileNode node;
     node.inode_id = entry.file_id;
     node.parent_inode_id = directory_node.inode_id;
-    node.normalized_path = ComposeChildPath(directory_node.normalized_path, entry.key.name);
-    node.metadata = std::move(metadata_result.value());
+    node.normalized_path = ComposeChildPath(ChildPathRequest{
+        .parent = directory_node.normalized_path,
+        .child = entry.key.name,
+    });
+    node.metadata = metadata_result.value();
 
     auto wide_name_result = Utf8ToWide(entry.key.name);
     if (!wide_name_result.ok()) {
