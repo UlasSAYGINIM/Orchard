@@ -167,10 +167,19 @@ def fs_header_value(object_id, record_type): return object_id | (record_type << 
 def inode_key(object_id): return struct.pack("<Q", fs_header_value(object_id, FS_TYPE_INODE))
 def named_key(object_id, record_type, name): return struct.pack("<QH", fs_header_value(object_id, record_type), len(name)) + name.encode("ascii")
 def extent_key(object_id, logical): return struct.pack("<QQ", fs_header_value(object_id, FS_TYPE_FILE_EXTENT), logical)
-def inode_value(parent_id, logical_size, allocated_size, flags, child_count, mode):
+DEFAULT_TIMESTAMP_NS = 1704067200000000000
+def inode_value(parent_id, logical_size, allocated_size, flags, child_count, mode, link_count=1,
+                creation_time_ns=DEFAULT_TIMESTAMP_NS, access_time_ns=None,
+                write_time_ns=None, change_time_ns=None):
+    if access_time_ns is None: access_time_ns = creation_time_ns
+    if write_time_ns is None: write_time_ns = creation_time_ns
+    if change_time_ns is None: change_time_ns = write_time_ns
     data = bytearray(0x60)
     w64(data, 0x00, parent_id); w64(data, 0x10, allocated_size); w64(data, 0x18, flags)
-    w32(data, 0x20, child_count); w16(data, 0x24, mode); w64(data, 0x58, logical_size)
+    w32(data, 0x20, child_count); w16(data, 0x24, mode)
+    w64(data, 0x28, creation_time_ns); w64(data, 0x30, access_time_ns)
+    w64(data, 0x38, write_time_ns); w64(data, 0x40, change_time_ns)
+    w32(data, 0x48, link_count); w64(data, 0x58, logical_size)
     return bytes(data)
 def dir_value(file_id): return struct.pack("<QH", file_id, 0)
 def extent_value(length, physical_block): return struct.pack("<QQQ", length, physical_block, 0)

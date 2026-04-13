@@ -57,8 +57,7 @@ blockio::Result<SelectedVolumeRef> SelectVolume(const orchard::apfs::DiscoveryRe
         std::ostringstream message;
         message << "Selected APFS volume '" << volume.name
                 << "' is not mountable through the read-only WinFsp adapter.";
-        return orchard::apfs::MakeApfsError(blockio::ErrorCode::kUnsupportedTarget,
-                                            message.str());
+        return orchard::apfs::MakeApfsError(blockio::ErrorCode::kUnsupportedTarget, message.str());
       }
 
       candidates.push_back(SelectedVolumeRef{
@@ -129,15 +128,13 @@ std::uint32_t ComputeVolumeSerialNumber(const orchard::apfs::VolumeInfo& volume)
 
 MountedVolume::MountedVolume(MountConfig config, blockio::InspectionTargetInfo target_info,
                              blockio::ReaderHandle reader, orchard::apfs::ContainerInfo container,
-                             orchard::apfs::VolumeInfo volume,
-                             orchard::apfs::VolumeContext context,
+                             orchard::apfs::VolumeInfo volume, orchard::apfs::VolumeContext context,
                              std::vector<std::uint8_t> security_descriptor,
-                             std::wstring volume_label,
-                             const std::uint32_t volume_serial_number)
+                             std::wstring volume_label, const std::uint32_t volume_serial_number)
     : config_(std::move(config)), target_info_(std::move(target_info)), reader_(std::move(reader)),
       container_(std::move(container)), volume_(std::move(volume)), context_(std::move(context)),
-      security_descriptor_(std::move(security_descriptor)),
-      volume_label_(std::move(volume_label)), volume_serial_number_(volume_serial_number) {}
+      security_descriptor_(std::move(security_descriptor)), volume_label_(std::move(volume_label)),
+      volume_serial_number_(volume_serial_number) {}
 
 blockio::Result<MountedVolumeHandle> MountedVolume::Open(const MountConfig& config) {
   auto target_info = blockio::InspectTargetPath(config.target_path);
@@ -164,8 +161,7 @@ blockio::Result<MountedVolumeHandle> MountedVolume::Open(const MountConfig& conf
   auto reader = std::move(reader_result.value());
   const auto& selected_container =
       discovery_result.value().containers[selected_result.value().container_index];
-  const auto& selected_volume =
-      selected_container.volumes[selected_result.value().volume_index];
+  const auto& selected_volume = selected_container.volumes[selected_result.value().volume_index];
 
   orchard::apfs::PhysicalObjectReader object_reader(*reader, selected_container.byte_offset,
                                                     selected_container.block_size);
@@ -175,9 +171,8 @@ blockio::Result<MountedVolumeHandle> MountedVolume::Open(const MountConfig& conf
     return container_omap_result.error();
   }
 
-  auto context_result =
-      orchard::apfs::VolumeContext::Load(*reader, selected_container, selected_volume,
-                                         container_omap_result.value());
+  auto context_result = orchard::apfs::VolumeContext::Load(
+      *reader, selected_container, selected_volume, container_omap_result.value());
   if (!context_result.ok()) {
     return context_result.error();
   }

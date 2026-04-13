@@ -20,7 +20,16 @@ blockio::Result<FileMetadata> GetFileMetadata(const VolumeContext& volume,
   FileMetadata metadata;
   metadata.object_id = inode_id;
   metadata.logical_size = inode_result.value().logical_size;
+  metadata.allocated_size = inode_result.value().allocated_size;
+  metadata.internal_flags = inode_result.value().internal_flags;
+  metadata.creation_time_unix_nanos = inode_result.value().creation_time_unix_nanos;
+  metadata.last_access_time_unix_nanos = inode_result.value().last_access_time_unix_nanos;
+  metadata.last_write_time_unix_nanos = inode_result.value().last_write_time_unix_nanos;
+  metadata.change_time_unix_nanos = inode_result.value().change_time_unix_nanos;
   metadata.kind = inode_result.value().kind;
+  metadata.child_count = inode_result.value().child_count;
+  metadata.link_count = inode_result.value().link_count;
+  metadata.mode = inode_result.value().mode;
   metadata.sparse = (inode_result.value().internal_flags & kSparseFlag) != 0U;
 
   auto xattr_result = volume.FindXattr(inode_id, kCompressionXattrName);

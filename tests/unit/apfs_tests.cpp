@@ -6,6 +6,11 @@
 #include <string_view>
 #include <vector>
 
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <Windows.h>
+
 #include "orchard/apfs/btree.h"
 #include "orchard/apfs/discovery.h"
 #include "orchard/apfs/file_read.h"
@@ -18,6 +23,8 @@
 #include "orchard/apfs/volume.h"
 #include "orchard/blockio/inspection_target.h"
 #include "orchard/blockio/reader.h"
+#include "orchard/fs_winfsp/directory_query.h"
+#include "orchard/fs_winfsp/file_info.h"
 #include "orchard/fs_winfsp/mount.h"
 #include "orchard/fs_winfsp/path_bridge.h"
 #include "orchard_test/test.h"
@@ -45,6 +52,7 @@ constexpr std::uint64_t kVolumeObjectId = 77U;
 constexpr std::uint64_t kVolumeOmapObjectId = 88U;
 constexpr std::uint64_t kFsTreeObjectId = 200U;
 constexpr std::uint64_t kCurrentCheckpointXid = 42U;
+constexpr std::uint64_t kDefaultTimestampUnixNanos = 1704067200000000000ULL;
 
 constexpr std::uint64_t kRootInodeId = orchard::apfs::kApfsRootDirectoryObjectId;
 constexpr std::uint64_t kAlphaInodeId = 20U;
@@ -298,13 +306,26 @@ std::vector<std::uint8_t> MakeFileExtentKey(const std::uint64_t object_id,
 std::vector<std::uint8_t>
 MakeInodeValue(const std::uint64_t parent_id, const std::uint64_t logical_size,
                const std::uint64_t allocated_size, const std::uint64_t internal_flags,
-               const std::uint32_t child_count, const std::uint16_t mode) {
+               const std::uint32_t child_count, const std::uint16_t mode,
+               const std::uint32_t link_count = 1U,
+               const std::uint64_t creation_time_unix_nanos = kDefaultTimestampUnixNanos,
+               const std::optional<std::uint64_t> last_access_time_unix_nanos = std::nullopt,
+               const std::optional<std::uint64_t> last_write_time_unix_nanos = std::nullopt,
+               const std::optional<std::uint64_t> change_time_unix_nanos = std::nullopt) {
   std::vector<std::uint8_t> bytes(0x60U, 0U);
+  const auto access_time = last_access_time_unix_nanos.value_or(creation_time_unix_nanos);
+  const auto write_time = last_write_time_unix_nanos.value_or(creation_time_unix_nanos);
+  const auto change_time = change_time_unix_nanos.value_or(write_time);
   WriteLe64(bytes, 0x00U, parent_id);
   WriteLe64(bytes, 0x10U, allocated_size);
   WriteLe64(bytes, 0x18U, internal_flags);
   WriteLe32(bytes, 0x20U, child_count);
   WriteLe16(bytes, 0x24U, mode);
+  WriteLe64(bytes, 0x28U, creation_time_unix_nanos);
+  WriteLe64(bytes, 0x30U, access_time);
+  WriteLe64(bytes, 0x38U, write_time);
+  WriteLe64(bytes, 0x40U, change_time);
+  WriteLe32(bytes, 0x48U, link_count);
   WriteLe64(bytes, 0x58U, logical_size);
   return bytes;
 }
@@ -902,6 +923,11 @@ void WinFspPathBridgeNormalizesPaths() {
   ORCHARD_TEST_REQUIRE(nested_result.ok());
   ORCHARD_TEST_REQUIRE(nested_result.value() == "/docs/empty.txt");
 
+  const auto normalized_parent_result =
+      orchard::fs_winfsp::NormalizeWindowsPath(L"\\docs\\\\.\\..\\alpha.txt");
+  ORCHARD_TEST_REQUIRE(normalized_parent_result.ok());
+  ORCHARD_TEST_REQUIRE(normalized_parent_result.value() == "/alpha.txt");
+
   const auto windows_path_result = orchard::fs_winfsp::OrchardPathToWindowsPath("/docs/empty.txt");
   ORCHARD_TEST_REQUIRE(windows_path_result.ok());
   ORCHARD_TEST_REQUIRE(windows_path_result.value() == L"\\docs\\empty.txt");
@@ -909,6 +935,132 @@ void WinFspPathBridgeNormalizesPaths() {
   const auto stream_result = orchard::fs_winfsp::NormalizeWindowsPath(L"\\bad:name");
   ORCHARD_TEST_REQUIRE(!stream_result.ok());
   ORCHARD_TEST_REQUIRE(stream_result.error().code == orchard::blockio::ErrorCode::kNotImplemented);
+
+  const auto invalid_character_result = orchard::fs_winfsp::NormalizeWindowsPath(L"\\bad*name");
+  ORCHARD_TEST_REQUIRE(!invalid_character_result.ok());
+  ORCHARD_TEST_REQUIRE(invalid_character_result.error().code ==
+                       orchard::blockio::ErrorCode::kInvalidArgument);
+}
+
+void WinFspFileInfoUsesApfsMetadata() {
+  const auto temp_path = std::filesystem::temp_directory_path() / "orchard_apfs_query_info.img";
+  const auto bytes = MakeDirectFixture();
+
+  {
+    std::ofstream output(temp_path, std::ios::binary);
+    output.write(reinterpret_cast<const char*>(bytes.data()),
+                 static_cast<std::streamsize>(bytes.size()));
+  }
+
+  orchard::fs_winfsp::MountConfig config;
+  config.target_path = temp_path;
+  config.mount_point = L"Q:";
+
+  const auto mounted_volume_result = orchard::fs_winfsp::OpenMountedVolume(config);
+  ORCHARD_TEST_REQUIRE(mounted_volume_result.ok());
+
+  const auto alpha_result = mounted_volume_result.value()->ResolveFileNode("/alpha.txt");
+  ORCHARD_TEST_REQUIRE(alpha_result.ok());
+  const auto alpha_info = orchard::fs_winfsp::BuildBasicFileInfo(
+      alpha_result.value(), mounted_volume_result.value()->volume_context().block_size());
+  ORCHARD_TEST_REQUIRE(alpha_info.file_size == kAlphaExtent1.size() + kAlphaExtent2.size());
+  ORCHARD_TEST_REQUIRE(alpha_info.allocation_size == kAlphaExtent1.size() + kAlphaExtent2.size());
+  ORCHARD_TEST_REQUIRE(alpha_info.hard_links == 1U);
+  ORCHARD_TEST_REQUIRE(alpha_info.creation_time != 0U);
+  ORCHARD_TEST_REQUIRE((alpha_info.file_attributes & FILE_ATTRIBUTE_DIRECTORY) == 0U);
+
+  const auto docs_result = mounted_volume_result.value()->ResolveFileNode("/docs");
+  ORCHARD_TEST_REQUIRE(docs_result.ok());
+  ORCHARD_TEST_REQUIRE(docs_result.value().metadata.child_count == 2U);
+  const auto docs_info = orchard::fs_winfsp::BuildBasicFileInfo(
+      docs_result.value(), mounted_volume_result.value()->volume_context().block_size());
+  ORCHARD_TEST_REQUIRE((docs_info.file_attributes & FILE_ATTRIBUTE_DIRECTORY) != 0U);
+  ORCHARD_TEST_REQUIRE(docs_info.allocation_size == 0U);
+  ORCHARD_TEST_REQUIRE(docs_info.creation_time != 0U);
+
+  std::filesystem::remove(temp_path);
+}
+
+void WinFspDirectoryQueryFiltersDeterministically() {
+  const auto temp_path = std::filesystem::temp_directory_path() / "orchard_apfs_query_dir.img";
+  const auto bytes = MakeDirectFixture();
+
+  {
+    std::ofstream output(temp_path, std::ios::binary);
+    output.write(reinterpret_cast<const char*>(bytes.data()),
+                 static_cast<std::streamsize>(bytes.size()));
+  }
+
+  orchard::fs_winfsp::MountConfig config;
+  config.target_path = temp_path;
+  config.mount_point = L"T:";
+
+  const auto mounted_volume_result = orchard::fs_winfsp::OpenMountedVolume(config);
+  ORCHARD_TEST_REQUIRE(mounted_volume_result.ok());
+
+  const auto root_result = mounted_volume_result.value()->ResolveFileNode("/");
+  ORCHARD_TEST_REQUIRE(root_result.ok());
+  const auto entries_result =
+      mounted_volume_result.value()->ListDirectoryEntries(root_result.value().inode_id);
+  ORCHARD_TEST_REQUIRE(entries_result.ok());
+
+  const auto query_entries_result = orchard::fs_winfsp::BuildDirectoryQueryEntries(
+      mounted_volume_result.value()->volume_context(), root_result.value(), entries_result.value());
+  ORCHARD_TEST_REQUIRE(query_entries_result.ok());
+  ORCHARD_TEST_REQUIRE(query_entries_result.value().size() == 4U);
+  ORCHARD_TEST_REQUIRE(query_entries_result.value()[0].file_name == L"alpha.txt");
+  ORCHARD_TEST_REQUIRE(query_entries_result.value()[1].file_name == L"compressed.txt");
+  ORCHARD_TEST_REQUIRE(query_entries_result.value()[2].file_name == L"docs");
+  ORCHARD_TEST_REQUIRE(query_entries_result.value()[3].file_name == L"holes.bin");
+
+  const auto marker_filtered = orchard::fs_winfsp::FilterDirectoryQueryEntries(
+      query_entries_result.value(), orchard::fs_winfsp::DirectoryQueryRequest{
+                                        .marker = std::wstring(L"alpha.txt"),
+                                        .pattern = L"*.txt",
+                                        .case_insensitive = true,
+                                    });
+  ORCHARD_TEST_REQUIRE(marker_filtered.size() == 1U);
+  ORCHARD_TEST_REQUIRE(marker_filtered[0].file_name == L"compressed.txt");
+
+  const auto pattern_filtered = orchard::fs_winfsp::FilterDirectoryQueryEntries(
+      query_entries_result.value(), orchard::fs_winfsp::DirectoryQueryRequest{
+                                        .marker = std::nullopt,
+                                        .pattern = L"ALPHA.*",
+                                        .case_insensitive = true,
+                                    });
+  ORCHARD_TEST_REQUIRE(pattern_filtered.size() == 1U);
+  ORCHARD_TEST_REQUIRE(pattern_filtered[0].file_name == L"alpha.txt");
+
+  std::filesystem::remove(temp_path);
+}
+
+void WinFspMountedVolumeReusesOpenNodeIdentity() {
+  const auto temp_path = std::filesystem::temp_directory_path() / "orchard_apfs_query_node.img";
+  const auto bytes = MakeDirectFixture();
+
+  {
+    std::ofstream output(temp_path, std::ios::binary);
+    output.write(reinterpret_cast<const char*>(bytes.data()),
+                 static_cast<std::streamsize>(bytes.size()));
+  }
+
+  orchard::fs_winfsp::MountConfig config;
+  config.target_path = temp_path;
+  config.mount_point = L"U:";
+
+  const auto mounted_volume_result = orchard::fs_winfsp::OpenMountedVolume(config);
+  ORCHARD_TEST_REQUIRE(mounted_volume_result.ok());
+
+  const auto first_open_result = mounted_volume_result.value()->AcquireOpenNode("/alpha.txt");
+  ORCHARD_TEST_REQUIRE(first_open_result.ok());
+  const auto second_open_result = mounted_volume_result.value()->AcquireOpenNode("/alpha.txt");
+  ORCHARD_TEST_REQUIRE(second_open_result.ok());
+  ORCHARD_TEST_REQUIRE(first_open_result.value().get() == second_open_result.value().get());
+
+  mounted_volume_result.value()->ReleaseOpenNode(first_open_result.value().get());
+  mounted_volume_result.value()->ReleaseOpenNode(second_open_result.value().get());
+
+  std::filesystem::remove(temp_path);
 }
 
 void WinFspMountedVolumeOpensSyntheticFixture() {
@@ -990,6 +1142,10 @@ int main() {
       {"InspectTargetUsesRealReaderPathAndEnrichesOutput",
        &InspectTargetUsesRealReaderPathAndEnrichesOutput},
       {"WinFspPathBridgeNormalizesPaths", &WinFspPathBridgeNormalizesPaths},
+      {"WinFspFileInfoUsesApfsMetadata", &WinFspFileInfoUsesApfsMetadata},
+      {"WinFspDirectoryQueryFiltersDeterministically",
+       &WinFspDirectoryQueryFiltersDeterministically},
+      {"WinFspMountedVolumeReusesOpenNodeIdentity", &WinFspMountedVolumeReusesOpenNodeIdentity},
       {"WinFspMountedVolumeOpensSyntheticFixture", &WinFspMountedVolumeOpensSyntheticFixture},
       {"WinFspMountedVolumeRejectsReadWritePolicyWhenDowngradeDisabled",
        &WinFspMountedVolumeRejectsReadWritePolicyWhenDowngradeDisabled},

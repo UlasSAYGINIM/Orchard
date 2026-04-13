@@ -4,8 +4,8 @@
 
 namespace orchard::fs_winfsp {
 
-blockio::Result<MountSessionHandle> CreateFileSystemSession(const MountConfig& config,
-                                                            MountedVolumeHandle mounted_volume) {
+blockio::Result<MountSessionHandle>
+CreateFileSystemSession(const MountConfig& config, const MountedVolumeHandle& mounted_volume) {
   static_cast<void>(config);
   static_cast<void>(mounted_volume);
   return orchard::apfs::MakeApfsError(

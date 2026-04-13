@@ -13,5 +13,7 @@ blockio::Result<std::wstring> Utf8ToWide(std::string_view text);
 blockio::Result<std::string> WideToUtf8(std::wstring_view text);
 int CompareDirectoryNames(std::wstring_view left, std::wstring_view right,
                           bool case_insensitive) noexcept;
+bool MatchesDirectoryPattern(std::wstring_view name, std::wstring_view pattern,
+                             bool case_insensitive) noexcept;
 
 } // namespace orchard::fs_winfsp

@@ -8,8 +8,8 @@
 
 namespace orchard::fs_winfsp {
 
-blockio::Result<MountSessionHandle> CreateFileSystemSession(const MountConfig& config,
-                                                            MountedVolumeHandle mounted_volume);
+blockio::Result<MountSessionHandle>
+CreateFileSystemSession(const MountConfig& config, const MountedVolumeHandle& mounted_volume);
 bool IsWinFspBackendAvailable() noexcept;
 std::string_view WinFspBackendStatus() noexcept;
 

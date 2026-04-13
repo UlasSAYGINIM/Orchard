@@ -13,6 +13,28 @@ namespace {
 constexpr wchar_t kBackslash = L'\\';
 constexpr wchar_t kSlash = L'/';
 
+bool EqualsWideChar(const wchar_t left, const wchar_t right, const bool case_insensitive) noexcept {
+  return ::CompareStringOrdinal(&left, 1, &right, 1, case_insensitive ? TRUE : FALSE) == CSTR_EQUAL;
+}
+
+bool IsInvalidPathByte(const unsigned char value) noexcept {
+  if (value < 0x20U) {
+    return true;
+  }
+
+  switch (value) {
+  case '"':
+  case '<':
+  case '>':
+  case '|':
+  case '?':
+  case '*':
+    return true;
+  default:
+    return false;
+  }
+}
+
 } // namespace
 
 blockio::Result<std::string> WideToUtf8(const std::wstring_view text) {
@@ -20,9 +42,9 @@ blockio::Result<std::string> WideToUtf8(const std::wstring_view text) {
     return std::string{};
   }
 
-  const auto size = ::WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, text.data(),
-                                          static_cast<int>(text.size()), nullptr, 0, nullptr,
-                                          nullptr);
+  const auto size =
+      ::WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, text.data(),
+                            static_cast<int>(text.size()), nullptr, 0, nullptr, nullptr);
   if (size <= 0) {
     return orchard::apfs::MakeApfsError(blockio::ErrorCode::kInvalidArgument,
                                         "Failed to convert UTF-16 text to UTF-8.");
@@ -71,37 +93,59 @@ blockio::Result<std::string> NormalizeWindowsPath(const std::wstring_view window
     return utf8_result.error();
   }
 
-  std::string normalized;
-  normalized.reserve(utf8_result.value().size() + 1U);
-  normalized.push_back('/');
-
-  bool previous_was_separator = true;
-  for (const auto ch : utf8_result.value()) {
-    if (ch == ':') {
-      return orchard::apfs::MakeApfsError(
-          blockio::ErrorCode::kNotImplemented,
-          "WinFsp stream syntax is not supported by the Orchard M2 read-only adapter.");
+  std::vector<std::string> components;
+  const auto& utf8 = utf8_result.value();
+  std::size_t current = 0U;
+  while (current < utf8.size()) {
+    while (current < utf8.size() && (utf8[current] == '\\' || utf8[current] == '/')) {
+      ++current;
+    }
+    if (current >= utf8.size()) {
+      break;
     }
 
-    const auto is_separator = ch == '\\' || ch == '/';
-    if (is_separator) {
-      if (!previous_was_separator) {
-        normalized.push_back('/');
+    auto next = utf8.find_first_of("\\/", current);
+    if (next == std::string::npos) {
+      next = utf8.size();
+    }
+
+    const auto component = utf8.substr(current, next - current);
+    for (const auto ch : component) {
+      if (ch == ':') {
+        return orchard::apfs::MakeApfsError(
+            blockio::ErrorCode::kNotImplemented,
+            "WinFsp stream syntax is not supported by the Orchard M2 read-only adapter.");
       }
-      previous_was_separator = true;
+      if (IsInvalidPathByte(static_cast<unsigned char>(ch))) {
+        return orchard::apfs::MakeApfsError(blockio::ErrorCode::kInvalidArgument,
+                                            "The Windows path contains unsupported characters.");
+      }
+    }
+
+    if (component == ".") {
+      current = next;
+      continue;
+    }
+    if (component == "..") {
+      if (!components.empty()) {
+        components.pop_back();
+      }
+      current = next;
       continue;
     }
 
-    normalized.push_back(ch);
-    previous_was_separator = false;
+    components.push_back(component);
+    current = next;
   }
 
-  if (normalized.size() > 1U && normalized.back() == '/') {
-    normalized.pop_back();
+  if (components.empty()) {
+    return std::string("/");
   }
 
-  if (normalized.empty()) {
-    normalized = "/";
+  std::string normalized;
+  for (const auto& component : components) {
+    normalized.push_back('/');
+    normalized += component;
   }
 
   return normalized;
@@ -141,6 +185,48 @@ int CompareDirectoryNames(const std::wstring_view left, const std::wstring_view 
   default:
     return 0;
   }
+}
+
+bool MatchesDirectoryPattern(const std::wstring_view name, const std::wstring_view pattern,
+                             const bool case_insensitive) noexcept {
+  if (pattern.empty() || pattern == L"*" || pattern == L"*.*") {
+    return true;
+  }
+
+  std::size_t name_index = 0U;
+  std::size_t pattern_index = 0U;
+  std::size_t star_pattern_index = std::wstring_view::npos;
+  std::size_t star_name_index = 0U;
+
+  while (name_index < name.size()) {
+    if (pattern_index < pattern.size() && pattern[pattern_index] == L'*') {
+      star_pattern_index = pattern_index++;
+      star_name_index = name_index;
+      continue;
+    }
+
+    if (pattern_index < pattern.size() &&
+        (pattern[pattern_index] == L'?' ||
+         EqualsWideChar(name[name_index], pattern[pattern_index], case_insensitive))) {
+      ++name_index;
+      ++pattern_index;
+      continue;
+    }
+
+    if (star_pattern_index != std::wstring_view::npos) {
+      pattern_index = star_pattern_index + 1U;
+      name_index = ++star_name_index;
+      continue;
+    }
+
+    return false;
+  }
+
+  while (pattern_index < pattern.size() && pattern[pattern_index] == L'*') {
+    ++pattern_index;
+  }
+
+  return pattern_index == pattern.size();
 }
 
 } // namespace orchard::fs_winfsp

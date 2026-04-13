@@ -44,6 +44,19 @@ std::vector<std::string> SplitPath(const std::string_view path) {
   return components;
 }
 
+std::string JoinNormalizedPath(const std::vector<std::string>& components) {
+  if (components.empty()) {
+    return "/";
+  }
+
+  std::string path;
+  for (const auto& component : components) {
+    path.push_back('/');
+    path += component;
+  }
+  return path;
+}
+
 } // namespace
 
 blockio::Result<ResolvedPath> LookupPath(const VolumeContext& volume, const std::string_view path) {
@@ -55,6 +68,7 @@ blockio::Result<ResolvedPath> LookupPath(const VolumeContext& volume, const std:
   ResolvedPath resolved;
   resolved.normalized_path = "/";
   resolved.inode = current_inode_result.value();
+  std::vector<std::string> normalized_components;
 
   for (const auto& component : SplitPath(path)) {
     if (component == ".") {
@@ -62,12 +76,16 @@ blockio::Result<ResolvedPath> LookupPath(const VolumeContext& volume, const std:
     }
 
     if (component == "..") {
-      auto parent_result = volume.GetInode(resolved.inode.parent_id);
+      const auto parent_inode_id = resolved.inode.parent_id;
+      auto parent_result = volume.GetInode(parent_inode_id);
       if (!parent_result.ok()) {
         return parent_result.error();
       }
       resolved.inode = parent_result.value();
-      resolved.normalized_path = "/";
+      if (!normalized_components.empty()) {
+        normalized_components.pop_back();
+      }
+      resolved.normalized_path = JoinNormalizedPath(normalized_components);
       continue;
     }
 
@@ -98,12 +116,8 @@ blockio::Result<ResolvedPath> LookupPath(const VolumeContext& volume, const std:
     }
 
     resolved.inode = inode_result.value();
-    if (resolved.normalized_path == "/") {
-      resolved.normalized_path += component;
-    } else {
-      resolved.normalized_path += "/";
-      resolved.normalized_path += component;
-    }
+    normalized_components.push_back(match->key.name);
+    resolved.normalized_path = JoinNormalizedPath(normalized_components);
   }
 
   return resolved;

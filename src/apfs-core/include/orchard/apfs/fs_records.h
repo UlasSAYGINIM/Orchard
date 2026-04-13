@@ -24,7 +24,12 @@ struct InodeRecord {
   std::uint64_t logical_size = 0;
   std::uint64_t allocated_size = 0;
   std::uint64_t internal_flags = 0;
+  std::uint64_t creation_time_unix_nanos = 0;
+  std::uint64_t last_access_time_unix_nanos = 0;
+  std::uint64_t last_write_time_unix_nanos = 0;
+  std::uint64_t change_time_unix_nanos = 0;
   std::uint32_t child_count = 0;
+  std::uint32_t link_count = 0;
   std::uint16_t mode = 0;
   InodeKind kind = InodeKind::kUnknown;
 };

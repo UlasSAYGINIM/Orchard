@@ -6,12 +6,13 @@
 
 #include <algorithm>
 #include <atomic>
-#include <cwchar>
 #include <cstring>
+#include <cwchar>
 #include <memory>
 #include <utility>
 #include <vector>
 
+#include "orchard/fs_winfsp/directory_query.h"
 #include "orchard/fs_winfsp/file_info.h"
 #include "orchard/fs_winfsp/path_bridge.h"
 
@@ -59,19 +60,6 @@ UINT64 GetCurrentSystemTime() noexcept {
 
 NTSTATUS ReadOnlyNtStatus() noexcept {
   return STATUS_MEDIA_WRITE_PROTECTED;
-}
-
-std::string ComposeChildPath(const std::string_view parent, const std::string_view child) {
-  if (parent == "/") {
-    return std::string("/") + std::string(child);
-  }
-
-  std::string path(parent);
-  if (path.empty() || path.back() != '/') {
-    path.push_back('/');
-  }
-  path.append(child);
-  return path;
 }
 
 void CopyBasicFileInfo(const BasicFileInfo& source, FSP_FSCTL_FILE_INFO& destination) noexcept {
@@ -141,7 +129,8 @@ private:
   static NTSTATUS SetVolumeLabel(FSP_FILE_SYSTEM* file_system, PWSTR volume_label,
                                  FSP_FSCTL_VOLUME_INFO* volume_info) noexcept;
   static NTSTATUS GetSecurityByName(FSP_FILE_SYSTEM* file_system, PWSTR file_name,
-                                    PUINT32 file_attributes, PSECURITY_DESCRIPTOR security_descriptor,
+                                    PUINT32 file_attributes,
+                                    PSECURITY_DESCRIPTOR security_descriptor,
                                     SIZE_T* security_descriptor_size) noexcept;
   static NTSTATUS Create(FSP_FILE_SYSTEM* file_system, PWSTR file_name, UINT32 create_options,
                          UINT32 granted_access, UINT32 file_attributes,
@@ -168,11 +157,10 @@ private:
                               FSP_FSCTL_FILE_INFO* file_info) noexcept;
   static NTSTATUS SetBasicInfo(FSP_FILE_SYSTEM* file_system, PVOID file_context,
                                UINT32 file_attributes, UINT64 creation_time,
-                               UINT64 last_access_time, UINT64 last_write_time,
-                               UINT64 change_time, FSP_FSCTL_FILE_INFO* file_info) noexcept;
+                               UINT64 last_access_time, UINT64 last_write_time, UINT64 change_time,
+                               FSP_FSCTL_FILE_INFO* file_info) noexcept;
   static NTSTATUS SetFileSize(FSP_FILE_SYSTEM* file_system, PVOID file_context, UINT64 new_size,
-                              BOOLEAN set_allocation_size,
-                              FSP_FSCTL_FILE_INFO* file_info) noexcept;
+                              BOOLEAN set_allocation_size, FSP_FSCTL_FILE_INFO* file_info) noexcept;
   static NTSTATUS CanDelete(FSP_FILE_SYSTEM* file_system, PVOID file_context,
                             PWSTR file_name) noexcept;
   static NTSTATUS Rename(FSP_FILE_SYSTEM* file_system, PVOID file_context, PWSTR file_name,
@@ -217,31 +205,9 @@ blockio::Result<FileNode> ResolveNodeFromWidePath(const MountedVolume& mounted_v
   return mounted_volume.ResolveFileNode(normalized_path_result.value());
 }
 
-blockio::Result<std::vector<std::uint8_t>>
-ReadFileBytes(const MountedVolume& mounted_volume, const FileNode& node, const std::uint64_t offset,
-              const ULONG length) {
-  orchard::apfs::FileReadRequest request;
-  request.inode_id = node.inode_id;
-  request.offset = offset;
-  request.size = static_cast<std::size_t>(length);
+blockio::Result<std::vector<std::uint8_t>> ReadFileBytes(const MountedVolume& mounted_volume,
+                                                         orchard::apfs::FileReadRequest request) {
   return mounted_volume.ReadFileRange(request);
-}
-
-blockio::Result<FileNode> BuildDirectoryChildNode(const MountedVolume& mounted_volume,
-                                                  const FileNode& parent,
-                                                  const orchard::apfs::DirectoryEntryRecord& entry) {
-  auto metadata_result =
-      orchard::apfs::GetFileMetadata(mounted_volume.volume_context(), entry.file_id);
-  if (!metadata_result.ok()) {
-    return metadata_result.error();
-  }
-
-  FileNode node;
-  node.inode_id = entry.file_id;
-  node.parent_inode_id = parent.inode_id;
-  node.normalized_path = ComposeChildPath(parent.normalized_path, entry.key.name);
-  node.metadata = metadata_result.value();
-  return node;
 }
 
 blockio::Result<MountSessionHandle> WinFspMountSession::Start(const MountConfig& config,
@@ -280,33 +246,36 @@ blockio::Result<MountSessionHandle> WinFspMountSession::Start(const MountConfig&
   volume_params.VolumeCreationTime = GetCurrentSystemTime();
   volume_params.VolumeSerialNumber = session->mounted_volume().volume_serial_number();
   volume_params.FileInfoTimeout = kFileInfoTimeoutMs;
-  volume_params.CaseSensitiveSearch = session->mounted_volume().volume_info().case_insensitive ? 0U : 1U;
+  volume_params.CaseSensitiveSearch =
+      session->mounted_volume().volume_info().case_insensitive ? 0U : 1U;
   volume_params.CasePreservedNames = 1;
   volume_params.UnicodeOnDisk = 1;
   volume_params.PersistentAcls = 1;
   volume_params.ReadOnlyVolume = 1;
   volume_params.AllowOpenInKernelMode = 1;
-  ::wcscpy_s(volume_params.FileSystemName,
-             sizeof(volume_params.FileSystemName) / sizeof(WCHAR), L"Orchard");
+  ::wcscpy_s(volume_params.FileSystemName, sizeof(volume_params.FileSystemName) / sizeof(WCHAR),
+             L"Orchard");
 
-  auto status = ::FspFileSystemCreate(const_cast<PWSTR>(L"" FSP_FSCTL_DISK_DEVICE_NAME),
-                                      &volume_params, &file_system_interface,
-                                      &session->file_system_);
+  auto status =
+      ::FspFileSystemCreate(const_cast<PWSTR>(L"" FSP_FSCTL_DISK_DEVICE_NAME), &volume_params,
+                            &file_system_interface, &session->file_system_);
   if (!NT_SUCCESS(status)) {
-    return orchard::apfs::MakeApfsError(blockio::ErrorCode::kOpenFailed,
-                                        "FspFileSystemCreate failed for the Orchard WinFsp adapter.");
+    return orchard::apfs::MakeApfsError(
+        blockio::ErrorCode::kOpenFailed,
+        "FspFileSystemCreate failed for the Orchard WinFsp adapter.");
   }
 
   session->file_system_->UserContext = session.get();
 
-  status = ::FspFileSystemSetMountPoint(
-      session->file_system_,
-      session->mount_point_.empty() ? nullptr : session->mount_point_.data());
+  status = ::FspFileSystemSetMountPoint(session->file_system_, session->mount_point_.empty()
+                                                                   ? nullptr
+                                                                   : session->mount_point_.data());
   if (!NT_SUCCESS(status)) {
     ::FspFileSystemDelete(session->file_system_);
     session->file_system_ = nullptr;
-    return orchard::apfs::MakeApfsError(blockio::ErrorCode::kOpenFailed,
-                                        "FspFileSystemSetMountPoint failed for the Orchard WinFsp adapter.");
+    return orchard::apfs::MakeApfsError(
+        blockio::ErrorCode::kOpenFailed,
+        "FspFileSystemSetMountPoint failed for the Orchard WinFsp adapter.");
   }
 
   status = ::FspFileSystemStartDispatcher(session->file_system_, 0);
@@ -314,8 +283,9 @@ blockio::Result<MountSessionHandle> WinFspMountSession::Start(const MountConfig&
     ::FspFileSystemRemoveMountPoint(session->file_system_);
     ::FspFileSystemDelete(session->file_system_);
     session->file_system_ = nullptr;
-    return orchard::apfs::MakeApfsError(blockio::ErrorCode::kOpenFailed,
-                                        "FspFileSystemStartDispatcher failed for the Orchard WinFsp adapter.");
+    return orchard::apfs::MakeApfsError(
+        blockio::ErrorCode::kOpenFailed,
+        "FspFileSystemStartDispatcher failed for the Orchard WinFsp adapter.");
   }
 
   MountSessionHandle handle(session.release());
@@ -336,6 +306,7 @@ NTSTATUS WinFspMountSession::SetVolumeLabel(FSP_FILE_SYSTEM* file_system, PWSTR 
   return ReadOnlyNtStatus();
 }
 
+// NOLINTBEGIN(bugprone-easily-swappable-parameters)
 NTSTATUS WinFspMountSession::GetSecurityByName(FSP_FILE_SYSTEM* file_system, PWSTR file_name,
                                                PUINT32 file_attributes,
                                                PSECURITY_DESCRIPTOR security_descriptor,
@@ -419,8 +390,9 @@ NTSTATUS WinFspMountSession::Open(FSP_FILE_SYSTEM* file_system, PWSTR file_name,
   }
 
   *file_context = node_result.value().get();
-  CopyBasicFileInfo(BuildBasicFileInfo(node, session->mounted_volume().volume_context().block_size()),
-                    *file_info);
+  CopyBasicFileInfo(
+      BuildBasicFileInfo(node, session->mounted_volume().volume_context().block_size()),
+      *file_info);
 
   if (session->mounted_volume().volume_info().case_insensitive) {
     auto normalized_name_result = OrchardPathToWindowsPath(node.normalized_path);
@@ -442,8 +414,7 @@ NTSTATUS WinFspMountSession::Open(FSP_FILE_SYSTEM* file_system, PWSTR file_name,
 }
 
 NTSTATUS WinFspMountSession::Overwrite(FSP_FILE_SYSTEM* file_system, PVOID file_context,
-                                       UINT32 file_attributes,
-                                       BOOLEAN replace_file_attributes,
+                                       UINT32 file_attributes, BOOLEAN replace_file_attributes,
                                        UINT64 allocation_size,
                                        FSP_FSCTL_FILE_INFO* file_info) noexcept {
   static_cast<void>(file_system);
@@ -484,8 +455,11 @@ NTSTATUS WinFspMountSession::Read(FSP_FILE_SYSTEM* file_system, PVOID file_conte
     return STATUS_END_OF_FILE;
   }
 
-  auto bytes_result =
-      ReadFileBytes(session->mounted_volume(), *node_result.value(), offset, length);
+  orchard::apfs::FileReadRequest request;
+  request.inode_id = node_result.value()->inode_id;
+  request.offset = offset;
+  request.size = static_cast<std::size_t>(length);
+  auto bytes_result = ReadFileBytes(session->mounted_volume(), request);
   if (!bytes_result.ok()) {
     return MapErrorToNtStatus(bytes_result.error());
   }
@@ -530,9 +504,9 @@ NTSTATUS WinFspMountSession::GetFileInfo(FSP_FILE_SYSTEM* file_system, PVOID fil
     return STATUS_INVALID_HANDLE;
   }
 
-  CopyBasicFileInfo(
-      BuildBasicFileInfo(*node_result.value(), session->mounted_volume().volume_context().block_size()),
-      *file_info);
+  CopyBasicFileInfo(BuildBasicFileInfo(*node_result.value(),
+                                       session->mounted_volume().volume_context().block_size()),
+                    *file_info);
   return STATUS_SUCCESS;
 }
 
@@ -619,8 +593,7 @@ NTSTATUS WinFspMountSession::SetSecurity(FSP_FILE_SYSTEM* file_system, PVOID fil
 
 NTSTATUS WinFspMountSession::ReadDirectory(FSP_FILE_SYSTEM* file_system, PVOID file_context,
                                            PWSTR pattern, PWSTR marker, PVOID buffer,
-                                           const ULONG length,
-                                           PULONG bytes_transferred) noexcept {
+                                           const ULONG length, PULONG bytes_transferred) noexcept {
   static_cast<void>(pattern);
 
   auto* session = FromFileSystem(file_system);
@@ -639,38 +612,31 @@ NTSTATUS WinFspMountSession::ReadDirectory(FSP_FILE_SYSTEM* file_system, PVOID f
     return MapErrorToNtStatus(entries_result.error());
   }
 
-  const auto case_insensitive = session->mounted_volume().volume_info().case_insensitive;
-  std::wstring marker_wide;
-  if (marker != nullptr) {
-    marker_wide.assign(marker);
+  auto query_entries_result =
+      BuildDirectoryQueryEntries(session->mounted_volume().volume_context(),
+                                 *directory_node_result.value(), entries_result.value());
+  if (!query_entries_result.ok()) {
+    return MapErrorToNtStatus(query_entries_result.error());
   }
 
-  for (const auto& entry : entries_result.value()) {
-    auto entry_name_result = Utf8ToWide(entry.key.name);
-    if (!entry_name_result.ok()) {
-      return MapErrorToNtStatus(entry_name_result.error());
-    }
-    if (marker != nullptr &&
-        CompareDirectoryNames(entry_name_result.value(), marker_wide, case_insensitive) <= 0) {
-      continue;
-    }
+  DirectoryQueryRequest request;
+  request.case_insensitive = session->mounted_volume().volume_info().case_insensitive;
+  request.pattern = pattern != nullptr ? std::wstring(pattern) : std::wstring(L"*");
+  if (marker != nullptr) {
+    request.marker = std::wstring(marker);
+  }
 
-    auto child_node_result =
-        BuildDirectoryChildNode(session->mounted_volume(), *directory_node_result.value(), entry);
-    if (!child_node_result.ok()) {
-      return MapErrorToNtStatus(child_node_result.error());
-    }
+  const auto query_entries = FilterDirectoryQueryEntries(query_entries_result.value(), request);
 
-    const auto basic_info = BuildBasicFileInfo(child_node_result.value(),
-                                               session->mounted_volume().volume_context().block_size());
+  for (const auto& query_entry : query_entries) {
     std::vector<std::uint8_t> dir_info_bytes(
-        sizeof(FSP_FSCTL_DIR_INFO) + entry_name_result.value().size() * sizeof(WCHAR), 0U);
+        sizeof(FSP_FSCTL_DIR_INFO) + query_entry.file_name.size() * sizeof(WCHAR), 0U);
     auto* dir_info = reinterpret_cast<FSP_FSCTL_DIR_INFO*>(dir_info_bytes.data());
     dir_info->Size = static_cast<UINT16>(dir_info_bytes.size());
-    CopyBasicFileInfo(basic_info, dir_info->FileInfo);
-    if (!entry_name_result.value().empty()) {
-      std::memcpy(dir_info->FileNameBuf, entry_name_result.value().data(),
-                  entry_name_result.value().size() * sizeof(WCHAR));
+    CopyBasicFileInfo(query_entry.file_info, dir_info->FileInfo);
+    if (!query_entry.file_name.empty()) {
+      std::memcpy(dir_info->FileNameBuf, query_entry.file_name.data(),
+                  query_entry.file_name.size() * sizeof(WCHAR));
     }
 
     if (!::FspFileSystemAddDirInfo(dir_info, buffer, length, bytes_transferred)) {
@@ -681,12 +647,13 @@ NTSTATUS WinFspMountSession::ReadDirectory(FSP_FILE_SYSTEM* file_system, PVOID f
   ::FspFileSystemAddDirInfo(nullptr, buffer, length, bytes_transferred);
   return STATUS_SUCCESS;
 }
+// NOLINTEND(bugprone-easily-swappable-parameters)
 
 } // namespace
 
-blockio::Result<MountSessionHandle> CreateFileSystemSession(const MountConfig& config,
-                                                            MountedVolumeHandle mounted_volume) {
-  return WinFspMountSession::Start(config, std::move(mounted_volume));
+blockio::Result<MountSessionHandle>
+CreateFileSystemSession(const MountConfig& config, const MountedVolumeHandle& mounted_volume) {
+  return WinFspMountSession::Start(config, mounted_volume);
 }
 
 bool IsWinFspBackendAvailable() noexcept {

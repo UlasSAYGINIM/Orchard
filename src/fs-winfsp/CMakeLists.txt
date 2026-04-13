@@ -1,10 +1,12 @@
 set(_orchard_winfsp_sources
+  src/directory_query.cpp
   src/file_info.cpp
   src/mount.cpp
   src/path_bridge.cpp
 )
 
 set(_orchard_winfsp_public_headers
+  include/orchard/fs_winfsp/directory_query.h
   include/orchard/fs_winfsp/file_info.h
   include/orchard/fs_winfsp/filesystem.h
   include/orchard/fs_winfsp/mount.h

@@ -40,6 +40,11 @@ blockio::Result<InodeRecord> ParseInodeRecord(const FsTreeRecordView& record_vie
   record.internal_flags = ReadLe64(record_view.value, 0x18U);
   record.child_count = ReadLe32(record_view.value, 0x20U);
   record.mode = ReadLe16(record_view.value, 0x24U);
+  record.creation_time_unix_nanos = ReadLe64(record_view.value, 0x28U);
+  record.last_access_time_unix_nanos = ReadLe64(record_view.value, 0x30U);
+  record.last_write_time_unix_nanos = ReadLe64(record_view.value, 0x38U);
+  record.change_time_unix_nanos = ReadLe64(record_view.value, 0x40U);
+  record.link_count = ReadLe32(record_view.value, 0x48U);
   record.logical_size = ReadLe64(record_view.value, 0x58U);
   record.kind = InferInodeKind(record.mode);
   return record;

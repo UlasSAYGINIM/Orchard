@@ -74,7 +74,7 @@ int main(int argc, char** argv) {
         std::cerr << "Invalid --volume-oid value.\n";
         return 1;
       }
-      config.selector.object_id = *value;
+      config.selector.object_id = value;
       continue;
     }
     if (argument == "--hold-ms" && index + 1 < argc) {

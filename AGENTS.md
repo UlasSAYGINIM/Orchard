@@ -119,7 +119,7 @@ Regenerate synthetic sample fixtures:
   - inline `decmpfs_uncompressed_attribute` reads
   - policy outcomes for writable, snapshot read-only, and sealed reject cases
 - `orchard-inspect` now enriches each discovered volume with root-directory samples and up to two root-file probes. The current probes are intended for offline inspection and test observability, not for final UX design.
-- `orchard_lint` now runs across 25 translation units and can take several minutes locally; prefer running it separately from `ctest`.
+- `orchard_lint` now runs across 30 translation units and can take several minutes locally; prefer running it separately from `ctest`.
 - When collecting verification evidence, do not run `cmake --build` and `ctest` in parallel. Running them concurrently can produce misleading failures against stale executables.
 
 ## M2 notes
@@ -139,6 +139,17 @@ ctest --preset default --output-on-failure
 - `FindWinFsp.cmake` now discovers the WinFsp runtime DLL in addition to headers/import libraries, and WinFsp-linked executables copy `winfsp-x64.dll` beside themselves after build. This fixed the local `0xc0000135` / `winfsp-x64.dll was not found` test failure.
 - The validated local smoke path for `M2-T01` is a drive-letter mount, not a directory mountpoint. A mount to `R:` worked; a mount to `%TEMP%\orchard-m2-smoke` failed at `FspFileSystemSetMountPoint` and needs follow-up in a later M2 task.
 - `tools/mount-smoke/src/main.cpp` now supports `--hold-ms <milliseconds>` so a local smoke run can mount, stay alive long enough for inspection, and then unmount cleanly without killing the process.
+- `M2-T02` extended the APFS metadata surface used by WinFsp query mapping. `FileMetadata` and `InodeRecord` now carry allocated size, timestamps, link count, child count, mode, and inode flags, and `BuildBasicFileInfo` in `src/fs-winfsp/src/file_info.cpp` is the single APFS-to-Windows file-info translation path.
+- `src/fs-winfsp/src/path_bridge.cpp` now treats Windows query paths more deliberately:
+  - collapses repeated separators
+  - resolves `.` and `..`
+  - rejects stream syntax using `:`
+  - rejects unsupported wildcard/control/path characters in normalized lookup paths
+- `src/fs-winfsp/src/directory_query.cpp` now owns WinFsp-facing directory query shaping:
+  - per-entry metadata fetch and `BasicFileInfo` construction
+  - marker/resume filtering
+  - simple wildcard pattern filtering
+  - deterministic output order inherited from the APFS directory listing
 - Local `M2-T01` smoke verification used:
 
 ```powershell
@@ -154,3 +165,9 @@ $env:WINFSP_ROOT_DIR = "$env:TEMP\winfsp-sdk\DYNAMIC"
   - `holes.bin`
 - `alpha.txt` read successfully during the smoke run with bytes:
   - `48-65-6C-6C-6F-20-4F-72-63-68-61-72-64-0A`
+- Local `M2-T02` shell-side smoke verification used the same drive-letter mount shape with `--hold-ms 12000`, then checked:
+  - repeated `Get-ChildItem R:\` returned `docs, alpha.txt, compressed.txt, holes.bin`
+  - `Get-ChildItem R:\docs` returned `empty.txt, note.txt`
+  - `(Get-Item R:\alpha.txt).Length` returned `14`
+  - `(Get-Item R:\compressed.txt).Length` returned `19`
+  - `[System.IO.File]::ReadAllText("R:\alpha.txt")` returned `Hello Orchard` plus trailing newline

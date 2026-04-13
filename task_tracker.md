@@ -389,18 +389,25 @@ A task is only `Done` when all apply:
 ### Review Snapshot
 
 - Review date: `2026-04-13`
-- Locally completed: `M2-T01`
+- Locally completed: `M2-T01`, `M2-T02`
 - Latest local verification:
   - `cmake --preset default -DORCHARD_ENABLE_WINFSP=ON`
+  - `tests/corpus/generate-sample-fixtures.ps1`
   - `cmake --build --preset default --parallel`
   - `cmake --build --preset default --target orchard_format_check`
   - `cmake --build --preset default --target orchard_lint`
   - `ctest --preset default --output-on-failure`
-  - `orchard-mount-smoke --target tests/corpus/samples/plain-user-data.img --mountpoint R: --hold-ms 30000`
-  - Result: `9/9 tests passed`, `clang-format check passed`, `clang-tidy passed`, WinFsp drive-letter smoke mount browsed `/` and unmounted cleanly
+  - `orchard-mount-smoke --target tests/corpus/samples/plain-user-data.img --mountpoint R: --hold-ms 12000`
+  - PowerShell smoke browse on the mounted drive:
+    - repeated `Get-ChildItem R:\`
+    - nested `Get-ChildItem R:\docs`
+    - file-length checks for `alpha.txt` and `compressed.txt`
+    - file read for `alpha.txt`
+  - Result: `9/9 tests passed`, `clang-format check passed`, `clang-tidy passed`, WinFsp drive-letter smoke mount returned stable root listings and file metadata, and unmounted cleanly
 - Implementation note:
   - WinFsp-linked executables now copy `winfsp-x64.dll` beside themselves after build so `ctest` and the smoke tool do not require a manually edited `PATH`.
   - The validated M2 smoke path uses a drive-letter mount (`R:`). A directory mountpoint attempt failed at `FspFileSystemSetMountPoint` and remains follow-up work outside `M2-T01`.
+  - `M2-T02` hardened query mapping by expanding APFS-side metadata, centralizing APFS-to-Windows file-info translation, making path normalization reject unsupported Windows syntax explicitly, and extracting deterministic directory query filtering into a dedicated helper.
 
 ### Tasks
 
@@ -411,11 +418,12 @@ A task is only `Done` when all apply:
   Verification: Manual mount smoke test.
   Evidence: `cmake/FindWinFsp.cmake` and `cmake/OrchardProject.cmake` now discover the WinFsp developer SDK/runtime and copy `winfsp-x64.dll` into WinFsp-linked output directories; `src/fs-winfsp/` now contains the real adapter split across `mount.cpp`, `filesystem.cpp`, `path_bridge.cpp`, and `file_info.cpp`; `tools/mount-smoke/src/main.cpp` mounts a selected APFS volume and supports timed clean shutdown with `--hold-ms`; `tests/unit/apfs_tests.cpp` covers path bridging and mounted-volume opening/policy gating; the local smoke run mounted `tests/corpus/samples/plain-user-data.img` at `R:`, browsed `docs`, `alpha.txt`, `compressed.txt`, and `holes.bin`, read `alpha.txt`, and observed clean unmount when the timed hold expired.
 
-- [ ] `M2-T02` File and directory query mapping
-  Status: `Planned`
+- [x] `M2-T02` File and directory query mapping
+  Status: `Done`
   Depends on: `M2-T01`
   Done when: Windows file info, directory enumeration, and path resolution map correctly to APFS data.
   Verification: Integration tests and Explorer browsing tests.
+  Evidence: `src/apfs-core/include/orchard/apfs/fs_records.h` and `file_read.h` now expose inode timestamps, allocated size, link count, mode, child count, and internal flags from the APFS reader core; `src/fs-winfsp/src/file_info.cpp` is now the single APFS-to-Windows metadata mapping layer; `src/fs-winfsp/src/path_bridge.cpp` normalizes repeated separators, resolves `.` and `..`, preserves matched case-insensitive names, and rejects stream syntax plus unsupported characters; `src/fs-winfsp/src/directory_query.cpp` centralizes deterministic directory-entry building, marker handling, and wildcard filtering; `tests/unit/apfs_tests.cpp` now covers metadata mapping, deterministic directory filtering, path normalization reject cases, and stable open-node identity reuse; local smoke verification against `plain-user-data.img` observed stable repeated root listings (`docs,alpha.txt,compressed.txt,holes.bin`), nested listing (`empty.txt,note.txt`), correct file lengths (`alpha.txt` = `14`, `compressed.txt` = `19`), successful file read (`Hello Orchard\n`), and clean timed unmount.
 
 - [ ] `M2-T03` Read-path Explorer compatibility
   Status: `Planned`
@@ -743,4 +751,5 @@ Start here once implementation begins:
 - [x] `NOW-10` Start `M1-T04` object map and B-tree traversal
 - [x] `NOW-11` Start `M1-T05` inode, dentry, and path lookup
 - [x] `NOW-12` Start `M2-T01` WinFsp read-only adapter skeleton on top of the offline reader core
-- [ ] `NOW-13` Start `M2-T02` file and directory query mapping hardening on top of the mounted adapter
+- [x] `NOW-13` Start `M2-T02` file and directory query mapping hardening on top of the mounted adapter
+- [ ] `NOW-14` Start `M2-T03` read-path Explorer compatibility hardening on top of the stricter query layer
