@@ -102,7 +102,11 @@ void PopulateFileProbes(VolumeInfo& volume, const VolumeContext& context,
 
     const auto preview_size = static_cast<std::size_t>(
         std::min<std::uint64_t>(metadata_result.value().logical_size, 24U));
-    auto bytes_result = ReadFileRange(context, entry.file_id, 0U, preview_size);
+    auto bytes_result = ReadFileRange(context, FileReadRequest{
+                                                   .inode_id = entry.file_id,
+                                                   .offset = 0U,
+                                                   .size = preview_size,
+                                               });
     if (!bytes_result.ok()) {
       volume.notes.push_back(bytes_result.error().message);
       continue;
@@ -135,8 +139,7 @@ void EnrichVolumeInfo(const blockio::Reader& reader, const ContainerInfo& contai
   }
 
   auto volume_result =
-      VolumeContext::Load(reader, container.byte_offset, container.block_size,
-                          container.selected_checkpoint.xid, volume, container_omap_result.value());
+      VolumeContext::Load(reader, container, volume, container_omap_result.value());
   if (!volume_result.ok()) {
     volume.notes.push_back(volume_result.error().message);
     return;

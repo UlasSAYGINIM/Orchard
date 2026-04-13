@@ -628,8 +628,7 @@ orchard::apfs::VolumeContext LoadVolumeContext(orchard::blockio::Reader& reader)
   ORCHARD_TEST_REQUIRE(container_omap_result.ok());
 
   const auto volume_result = orchard::apfs::VolumeContext::Load(
-      reader, container.byte_offset, container.block_size, container.selected_checkpoint.xid,
-      container.volumes[0], container_omap_result.value());
+      reader, container, container.volumes[0], container_omap_result.value());
   ORCHARD_TEST_REQUIRE(volume_result.ok());
   return volume_result.value();
 }
@@ -791,8 +790,12 @@ void FileReadPathHandlesPlainSparseCompressedAndEmptyFiles() {
   ORCHARD_TEST_REQUIRE(std::string(alpha_bytes.value().begin(), alpha_bytes.value().end()) ==
                        std::string(kAlphaExtent1) + std::string(kAlphaExtent2));
 
-  const auto alpha_partial =
-      orchard::apfs::ReadFileRange(volume, alpha_lookup.value().inode.key.header.object_id, 6U, 8U);
+  const auto alpha_partial = orchard::apfs::ReadFileRange(
+      volume, orchard::apfs::FileReadRequest{
+                  .inode_id = alpha_lookup.value().inode.key.header.object_id,
+                  .offset = 6U,
+                  .size = 8U,
+              });
   ORCHARD_TEST_REQUIRE(alpha_partial.ok());
   ORCHARD_TEST_REQUIRE(std::string(alpha_partial.value().begin(), alpha_partial.value().end()) ==
                        std::string(kAlphaExtent2));

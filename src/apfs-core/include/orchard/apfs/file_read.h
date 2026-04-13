@@ -16,11 +16,16 @@ struct FileMetadata {
   CompressionInfo compression;
 };
 
+struct FileReadRequest {
+  std::uint64_t inode_id = 0;
+  std::uint64_t offset = 0;
+  std::size_t size = 0;
+};
+
 blockio::Result<FileMetadata> GetFileMetadata(const VolumeContext& volume, std::uint64_t inode_id);
 
 blockio::Result<std::vector<std::uint8_t>> ReadFileRange(const VolumeContext& volume,
-                                                         std::uint64_t inode_id,
-                                                         std::uint64_t offset, std::size_t size);
+                                                         const FileReadRequest& request);
 
 blockio::Result<std::vector<std::uint8_t>> ReadWholeFile(const VolumeContext& volume,
                                                          std::uint64_t inode_id);

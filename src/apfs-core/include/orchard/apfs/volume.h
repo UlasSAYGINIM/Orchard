@@ -12,11 +12,23 @@
 
 namespace orchard::apfs {
 
+struct VolumeRuntimeConfig {
+  std::uint64_t container_byte_offset = 0;
+  std::uint32_t block_size = 0;
+  std::uint64_t xid_limit = 0;
+};
+
+struct PhysicalReadRequest {
+  std::uint64_t physical_block_index = 0;
+  std::uint64_t block_offset = 0;
+  std::size_t size = 0;
+};
+
 class VolumeContext {
 public:
-  static blockio::Result<VolumeContext>
-  Load(const blockio::Reader& reader, std::uint64_t container_byte_offset, std::uint32_t block_size,
-       std::uint64_t xid_limit, const VolumeInfo& info, const OmapResolver& container_omap);
+  static blockio::Result<VolumeContext> Load(const blockio::Reader& reader,
+                                             const ContainerInfo& container, const VolumeInfo& info,
+                                             const OmapResolver& container_omap);
 
   [[nodiscard]] const VolumeInfo& info() const noexcept {
     return info_;
@@ -42,12 +54,10 @@ public:
   [[nodiscard]] blockio::Result<std::optional<XattrRecord>> FindXattr(std::uint64_t inode_id,
                                                                       std::string_view name) const;
   [[nodiscard]] blockio::Result<std::vector<std::uint8_t>>
-  ReadPhysicalBytes(std::uint64_t physical_block_index, std::uint64_t block_offset,
-                    std::size_t size) const;
+  ReadPhysicalBytes(const PhysicalReadRequest& request) const;
 
 private:
-  VolumeContext(const blockio::Reader& reader, std::uint64_t container_byte_offset,
-                std::uint32_t block_size, std::uint64_t xid_limit, VolumeInfo info,
+  VolumeContext(const blockio::Reader& reader, VolumeRuntimeConfig runtime, VolumeInfo info,
                 std::uint64_t root_tree_block_index);
 
   [[nodiscard]] PhysicalObjectReader MakeObjectReader() const;

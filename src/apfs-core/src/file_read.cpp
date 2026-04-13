@@ -27,9 +27,11 @@ blockio::Result<FileMetadata> GetFileMetadata(const VolumeContext& volume,
   if (!xattr_result.ok()) {
     return xattr_result.error();
   }
-  if (xattr_result.value().has_value()) {
-    auto compression_result = ParseCompressionInfo(std::span<const std::uint8_t>(
-        xattr_result.value()->data.data(), xattr_result.value()->data.size()));
+  const auto& compression_xattr = xattr_result.value();
+  if (compression_xattr.has_value()) {
+    const auto& compression_data = compression_xattr->data;
+    auto compression_result = ParseCompressionInfo(
+        std::span<const std::uint8_t>(compression_data.data(), compression_data.size()));
     if (!compression_result.ok()) {
       return compression_result.error();
     }
@@ -43,10 +45,8 @@ blockio::Result<FileMetadata> GetFileMetadata(const VolumeContext& volume,
 }
 
 blockio::Result<std::vector<std::uint8_t>> ReadFileRange(const VolumeContext& volume,
-                                                         const std::uint64_t inode_id,
-                                                         const std::uint64_t offset,
-                                                         const std::size_t size) {
-  auto metadata_result = GetFileMetadata(volume, inode_id);
+                                                         const FileReadRequest& request) {
+  auto metadata_result = GetFileMetadata(volume, request.inode_id);
   if (!metadata_result.ok()) {
     return metadata_result.error();
   }
@@ -56,39 +56,41 @@ blockio::Result<std::vector<std::uint8_t>> ReadFileRange(const VolumeContext& vo
     return MakeApfsError(blockio::ErrorCode::kInvalidArgument,
                          "Requested inode is not readable as a file.");
   }
-  if (size == 0U || offset >= metadata_result.value().logical_size) {
+  if (request.size == 0U || request.offset >= metadata_result.value().logical_size) {
     return std::vector<std::uint8_t>{};
   }
 
-  const auto remaining = metadata_result.value().logical_size - offset;
+  const auto remaining = metadata_result.value().logical_size - request.offset;
   const auto bounded_size = static_cast<std::size_t>(
-      std::min<std::uint64_t>(remaining, static_cast<std::uint64_t>(size)));
+      std::min<std::uint64_t>(remaining, static_cast<std::uint64_t>(request.size)));
 
-  auto compression_xattr_result = volume.FindXattr(inode_id, kCompressionXattrName);
+  auto compression_xattr_result = volume.FindXattr(request.inode_id, kCompressionXattrName);
   if (!compression_xattr_result.ok()) {
     return compression_xattr_result.error();
   }
-  if (compression_xattr_result.value().has_value()) {
+  const auto& compression_xattr = compression_xattr_result.value();
+  if (compression_xattr.has_value()) {
+    const auto& compression_data = compression_xattr->data;
     auto decoded_result = DecodeCompressionPayload(
-        std::span<const std::uint8_t>(compression_xattr_result.value()->data.data(),
-                                      compression_xattr_result.value()->data.size()));
+        std::span<const std::uint8_t>(compression_data.data(), compression_data.size()));
     if (!decoded_result.ok()) {
       return decoded_result.error();
     }
 
     return std::vector<std::uint8_t>(
-        decoded_result.value().begin() + static_cast<std::ptrdiff_t>(offset),
-        decoded_result.value().begin() + static_cast<std::ptrdiff_t>(offset + bounded_size));
+        decoded_result.value().begin() + static_cast<std::ptrdiff_t>(request.offset),
+        decoded_result.value().begin() +
+            static_cast<std::ptrdiff_t>(request.offset + bounded_size));
   }
 
-  auto extents_result = volume.ListFileExtents(inode_id);
+  auto extents_result = volume.ListFileExtents(request.inode_id);
   if (!extents_result.ok()) {
     return extents_result.error();
   }
 
   std::vector<std::uint8_t> bytes(bounded_size, 0U);
-  const auto range_start = offset;
-  const auto range_end = offset + bounded_size;
+  const auto range_start = request.offset;
+  const auto range_end = request.offset + bounded_size;
 
   for (const auto& extent : extents_result.value()) {
     const auto extent_start = extent.key.logical_address;
@@ -107,7 +109,11 @@ blockio::Result<std::vector<std::uint8_t>> ReadFileRange(const VolumeContext& vo
     const auto physical_block =
         extent.physical_block + (physical_byte_offset / volume.block_size());
     const auto block_offset = physical_byte_offset % volume.block_size();
-    auto data_result = volume.ReadPhysicalBytes(physical_block, block_offset, read_size);
+    auto data_result = volume.ReadPhysicalBytes(PhysicalReadRequest{
+        .physical_block_index = physical_block,
+        .block_offset = block_offset,
+        .size = read_size,
+    });
     if (!data_result.ok()) {
       return data_result.error();
     }
@@ -131,8 +137,11 @@ blockio::Result<std::vector<std::uint8_t>> ReadWholeFile(const VolumeContext& vo
                          "Requested file exceeds the supported in-memory read size.");
   }
 
-  return ReadFileRange(volume, inode_id, 0U,
-                       static_cast<std::size_t>(metadata_result.value().logical_size));
+  FileReadRequest request;
+  request.inode_id = inode_id;
+  request.offset = 0U;
+  request.size = static_cast<std::size_t>(metadata_result.value().logical_size);
+  return ReadFileRange(volume, request);
 }
 
 } // namespace orchard::apfs

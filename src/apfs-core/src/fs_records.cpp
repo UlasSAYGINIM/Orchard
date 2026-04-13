@@ -23,89 +23,85 @@ InodeKind InferInodeKind(const std::uint16_t mode) {
 
 } // namespace
 
-blockio::Result<InodeRecord> ParseInodeRecord(const std::span<const std::uint8_t> key,
-                                              const std::span<const std::uint8_t> value) {
-  auto key_result = ParseInodeKey(key);
+blockio::Result<InodeRecord> ParseInodeRecord(const FsTreeRecordView& record_view) {
+  auto key_result = ParseInodeKey(record_view.key);
   if (!key_result.ok()) {
     return key_result.error();
   }
-  if (!HasRange(value, 0x58U, 8U)) {
+  if (!HasRange(record_view.value, 0x58U, 8U)) {
     return MakeApfsError(blockio::ErrorCode::kCorruptData,
                          "Synthetic APFS inode value is missing required fixed fields.");
   }
 
   InodeRecord record;
   record.key = key_result.value();
-  record.parent_id = ReadLe64(value, 0x00U);
-  record.allocated_size = ReadLe64(value, 0x10U);
-  record.internal_flags = ReadLe64(value, 0x18U);
-  record.child_count = ReadLe32(value, 0x20U);
-  record.mode = ReadLe16(value, 0x24U);
-  record.logical_size = ReadLe64(value, 0x58U);
+  record.parent_id = ReadLe64(record_view.value, 0x00U);
+  record.allocated_size = ReadLe64(record_view.value, 0x10U);
+  record.internal_flags = ReadLe64(record_view.value, 0x18U);
+  record.child_count = ReadLe32(record_view.value, 0x20U);
+  record.mode = ReadLe16(record_view.value, 0x24U);
+  record.logical_size = ReadLe64(record_view.value, 0x58U);
   record.kind = InferInodeKind(record.mode);
   return record;
 }
 
 blockio::Result<DirectoryEntryRecord>
-ParseDirectoryEntryRecord(const std::span<const std::uint8_t> key,
-                          const std::span<const std::uint8_t> value) {
-  auto key_result = ParseDirectoryRecordKey(key);
+ParseDirectoryEntryRecord(const FsTreeRecordView& record_view) {
+  auto key_result = ParseDirectoryRecordKey(record_view.key);
   if (!key_result.ok()) {
     return key_result.error();
   }
-  if (!HasRange(value, 0x00U, 10U)) {
+  if (!HasRange(record_view.value, 0x00U, 10U)) {
     return MakeApfsError(blockio::ErrorCode::kCorruptData,
                          "Synthetic APFS directory entry value is too small.");
   }
 
   return DirectoryEntryRecord{
       .key = key_result.value(),
-      .file_id = ReadLe64(value, 0x00U),
-      .flags = ReadLe16(value, 0x08U),
+      .file_id = ReadLe64(record_view.value, 0x00U),
+      .flags = ReadLe16(record_view.value, 0x08U),
   };
 }
 
-blockio::Result<FileExtentRecord> ParseFileExtentRecord(const std::span<const std::uint8_t> key,
-                                                        const std::span<const std::uint8_t> value) {
-  auto key_result = ParseFileExtentKey(key);
+blockio::Result<FileExtentRecord> ParseFileExtentRecord(const FsTreeRecordView& record_view) {
+  auto key_result = ParseFileExtentKey(record_view.key);
   if (!key_result.ok()) {
     return key_result.error();
   }
-  if (!HasRange(value, 0x00U, 24U)) {
+  if (!HasRange(record_view.value, 0x00U, 24U)) {
     return MakeApfsError(blockio::ErrorCode::kCorruptData,
                          "Synthetic APFS file extent value is too small.");
   }
 
   return FileExtentRecord{
       .key = key_result.value(),
-      .length = ReadLe64(value, 0x00U),
-      .physical_block = ReadLe64(value, 0x08U),
-      .flags = ReadLe64(value, 0x10U),
+      .length = ReadLe64(record_view.value, 0x00U),
+      .physical_block = ReadLe64(record_view.value, 0x08U),
+      .flags = ReadLe64(record_view.value, 0x10U),
   };
 }
 
-blockio::Result<XattrRecord> ParseXattrRecord(const std::span<const std::uint8_t> key,
-                                              const std::span<const std::uint8_t> value) {
-  auto key_result = ParseXattrKey(key);
+blockio::Result<XattrRecord> ParseXattrRecord(const FsTreeRecordView& record_view) {
+  auto key_result = ParseXattrKey(record_view.key);
   if (!key_result.ok()) {
     return key_result.error();
   }
-  if (!HasRange(value, 0x00U, 8U)) {
+  if (!HasRange(record_view.value, 0x00U, 8U)) {
     return MakeApfsError(blockio::ErrorCode::kCorruptData,
                          "Synthetic APFS xattr value is too small.");
   }
 
-  const auto data_length = ReadLe32(value, 0x04U);
-  if (!HasRange(value, 0x08U, data_length)) {
+  const auto data_length = ReadLe32(record_view.value, 0x04U);
+  if (!HasRange(record_view.value, 0x08U, data_length)) {
     return MakeApfsError(blockio::ErrorCode::kCorruptData,
                          "Synthetic APFS xattr payload extends beyond the record value.");
   }
 
   XattrRecord record;
   record.key = key_result.value();
-  record.flags = ReadLe16(value, 0x00U);
-  record.data.assign(value.begin() + 8,
-                     value.begin() + 8 + static_cast<std::ptrdiff_t>(data_length));
+  record.flags = ReadLe16(record_view.value, 0x00U);
+  record.data.assign(record_view.value.begin() + 8,
+                     record_view.value.begin() + 8 + static_cast<std::ptrdiff_t>(data_length));
   return record;
 }
 

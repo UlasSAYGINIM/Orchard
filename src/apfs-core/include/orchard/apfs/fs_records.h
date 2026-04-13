@@ -49,14 +49,16 @@ struct XattrRecord {
   std::vector<std::uint8_t> data;
 };
 
-blockio::Result<InodeRecord> ParseInodeRecord(std::span<const std::uint8_t> key,
-                                              std::span<const std::uint8_t> value);
+struct FsTreeRecordView {
+  std::span<const std::uint8_t> key;
+  std::span<const std::uint8_t> value;
+};
+
+blockio::Result<InodeRecord> ParseInodeRecord(const FsTreeRecordView& record_view);
 blockio::Result<DirectoryEntryRecord>
-ParseDirectoryEntryRecord(std::span<const std::uint8_t> key, std::span<const std::uint8_t> value);
-blockio::Result<FileExtentRecord> ParseFileExtentRecord(std::span<const std::uint8_t> key,
-                                                        std::span<const std::uint8_t> value);
-blockio::Result<XattrRecord> ParseXattrRecord(std::span<const std::uint8_t> key,
-                                              std::span<const std::uint8_t> value);
+ParseDirectoryEntryRecord(const FsTreeRecordView& record_view);
+blockio::Result<FileExtentRecord> ParseFileExtentRecord(const FsTreeRecordView& record_view);
+blockio::Result<XattrRecord> ParseXattrRecord(const FsTreeRecordView& record_view);
 
 bool IsDirectory(InodeKind kind) noexcept;
 bool IsRegularFile(InodeKind kind) noexcept;
