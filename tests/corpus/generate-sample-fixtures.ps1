@@ -1,341 +1,301 @@
 param()
 
 $samplesDir = Join-Path $PSScriptRoot "samples"
-
-$ApfsBlockSize = 4096
-$BtreeInfoSize = 40
-$OmapObjectBlock = [UInt64]2
-$OmapRootBlock = [UInt64]3
-$OmapLeafBlock = [UInt64]4
-$LegacyVolumeBlock = [UInt64]5
-$CurrentVolumeBlock = [UInt64]6
-$VolumeObjectId = [UInt64]77
-$CurrentCheckpointXid = [UInt64]42
-$OmapValueDeleted = [UInt32]1
-
-function Write-Le16 {
-  param(
-    [byte[]]$Bytes,
-    [int]$Offset,
-    [UInt16]$Value
-  )
-
-  $Bytes[$Offset] = [byte]($Value -band 0xFF)
-  $Bytes[$Offset + 1] = [byte](($Value -shr 8) -band 0xFF)
-}
-
-function Write-Le32 {
-  param(
-    [byte[]]$Bytes,
-    [int]$Offset,
-    [UInt32]$Value
-  )
-
-  Write-Le16 -Bytes $Bytes -Offset $Offset -Value ([UInt16]($Value -band 0xFFFF))
-  Write-Le16 -Bytes $Bytes -Offset ($Offset + 2) -Value ([UInt16](($Value -shr 16) -band 0xFFFF))
-}
-
-function Write-Le64 {
-  param(
-    [byte[]]$Bytes,
-    [int]$Offset,
-    [UInt64]$Value
-  )
-
-  Write-Le32 -Bytes $Bytes -Offset $Offset -Value ([UInt32]($Value -band 0xFFFFFFFF))
-  Write-Le32 -Bytes $Bytes -Offset ($Offset + 4) -Value ([UInt32](($Value -shr 32) -band 0xFFFFFFFF))
-}
-
-function Write-Ascii {
-  param(
-    [byte[]]$Bytes,
-    [int]$Offset,
-    [string]$Text
-  )
-
-  $textBytes = [System.Text.Encoding]::ASCII.GetBytes($Text)
-  [Array]::Copy($textBytes, 0, $Bytes, $Offset, $textBytes.Length)
-}
-
-function Write-Utf16Le {
-  param(
-    [byte[]]$Bytes,
-    [int]$Offset,
-    [string]$Text
-  )
-
-  $textBytes = [System.Text.Encoding]::Unicode.GetBytes($Text)
-  [Array]::Copy($textBytes, 0, $Bytes, $Offset, $textBytes.Length)
-}
-
-function Write-Bytes {
-  param(
-    [byte[]]$Target,
-    [int]$Offset,
-    [byte[]]$Source
-  )
-
-  [Array]::Copy($Source, 0, $Target, $Offset, $Source.Length)
-}
-
-function Write-ObjectHeader {
-  param(
-    [byte[]]$Bytes,
-    [int]$BaseOffset,
-    [UInt64]$Oid,
-    [UInt64]$Xid,
-    [UInt32]$Type,
-    [UInt32]$Subtype
-  )
-
-  Write-Le64 -Bytes $Bytes -Offset ($BaseOffset + 0x00) -Value 0
-  Write-Le64 -Bytes $Bytes -Offset ($BaseOffset + 0x08) -Value $Oid
-  Write-Le64 -Bytes $Bytes -Offset ($BaseOffset + 0x10) -Value $Xid
-  Write-Le32 -Bytes $Bytes -Offset ($BaseOffset + 0x18) -Value $Type
-  Write-Le32 -Bytes $Bytes -Offset ($BaseOffset + 0x1C) -Value $Subtype
-}
-
-function Write-NxSuperblock {
-  param(
-    [byte[]]$Bytes,
-    [int]$BaseOffset,
-    [UInt64]$Xid,
-    [UInt64]$BlockCount
-  )
-
-  Write-ObjectHeader -Bytes $Bytes -BaseOffset $BaseOffset -Oid ([UInt64]($BaseOffset / $ApfsBlockSize)) -Xid $Xid -Type 1 -Subtype 0
-  Write-Ascii -Bytes $Bytes -Offset ($BaseOffset + 0x20) -Text "NXSB"
-  Write-Le32 -Bytes $Bytes -Offset ($BaseOffset + 0x24) -Value $ApfsBlockSize
-  Write-Le64 -Bytes $Bytes -Offset ($BaseOffset + 0x28) -Value $BlockCount
-  Write-Bytes -Target $Bytes -Offset ($BaseOffset + 0x48) -Source ([byte[]](0x10,0x11,0x12,0x13,0x20,0x21,0x22,0x23,0x30,0x31,0x32,0x33,0x40,0x41,0x42,0x43))
-  Write-Le64 -Bytes $Bytes -Offset ($BaseOffset + 0x60) -Value ($Xid + 1)
-  Write-Le32 -Bytes $Bytes -Offset ($BaseOffset + 0x68) -Value 1
-  Write-Le64 -Bytes $Bytes -Offset ($BaseOffset + 0x70) -Value 1
-  Write-Le64 -Bytes $Bytes -Offset ($BaseOffset + 0x98) -Value 5
-  Write-Le64 -Bytes $Bytes -Offset ($BaseOffset + 0xA0) -Value $OmapObjectBlock
-  Write-Le64 -Bytes $Bytes -Offset ($BaseOffset + 0xA8) -Value 7
-  Write-Le32 -Bytes $Bytes -Offset ($BaseOffset + 0xB4) -Value 100
-  Write-Le64 -Bytes $Bytes -Offset ($BaseOffset + 0xB8) -Value $VolumeObjectId
-}
-
-function Write-OmapSuperblock {
-  param(
-    [byte[]]$Bytes,
-    [int]$BaseOffset
-  )
-
-  Write-ObjectHeader -Bytes $Bytes -BaseOffset $BaseOffset -Oid $OmapObjectBlock -Xid $CurrentCheckpointXid -Type 0x0B -Subtype 0x0B
-  Write-Le32 -Bytes $Bytes -Offset ($BaseOffset + 0x20) -Value 0
-  Write-Le32 -Bytes $Bytes -Offset ($BaseOffset + 0x24) -Value 0
-  Write-Le32 -Bytes $Bytes -Offset ($BaseOffset + 0x28) -Value 0x0B
-  Write-Le32 -Bytes $Bytes -Offset ($BaseOffset + 0x2C) -Value 0
-  Write-Le64 -Bytes $Bytes -Offset ($BaseOffset + 0x30) -Value $OmapRootBlock
-  Write-Le64 -Bytes $Bytes -Offset ($BaseOffset + 0x38) -Value 0
-  Write-Le64 -Bytes $Bytes -Offset ($BaseOffset + 0x40) -Value 0
-  Write-Le64 -Bytes $Bytes -Offset ($BaseOffset + 0x48) -Value 0
-  Write-Le64 -Bytes $Bytes -Offset ($BaseOffset + 0x50) -Value 0
-}
-
-function Write-BtreeInfoFooter {
-  param(
-    [byte[]]$Bytes,
-    [int]$BaseOffset,
-    [UInt32]$KeySize,
-    [UInt32]$ValueSize,
-    [UInt64]$KeyCount,
-    [UInt64]$NodeCount
-  )
-
-  $footerOffset = $BaseOffset + $ApfsBlockSize - $BtreeInfoSize
-  Write-Le32 -Bytes $Bytes -Offset ($footerOffset + 0x00) -Value 0
-  Write-Le32 -Bytes $Bytes -Offset ($footerOffset + 0x04) -Value $ApfsBlockSize
-  Write-Le32 -Bytes $Bytes -Offset ($footerOffset + 0x08) -Value $KeySize
-  Write-Le32 -Bytes $Bytes -Offset ($footerOffset + 0x0C) -Value $ValueSize
-  Write-Le32 -Bytes $Bytes -Offset ($footerOffset + 0x10) -Value $KeySize
-  Write-Le32 -Bytes $Bytes -Offset ($footerOffset + 0x14) -Value $ValueSize
-  Write-Le64 -Bytes $Bytes -Offset ($footerOffset + 0x18) -Value $KeyCount
-  Write-Le64 -Bytes $Bytes -Offset ($footerOffset + 0x20) -Value $NodeCount
-}
-
-function Write-OmapKey {
-  param(
-    [byte[]]$Bytes,
-    [int]$Offset,
-    [UInt64]$Oid,
-    [UInt64]$Xid
-  )
-
-  Write-Le64 -Bytes $Bytes -Offset ($Offset + 0x00) -Value $Oid
-  Write-Le64 -Bytes $Bytes -Offset ($Offset + 0x08) -Value $Xid
-}
-
-function Write-OmapValue {
-  param(
-    [byte[]]$Bytes,
-    [int]$Offset,
-    [UInt32]$Flags,
-    [UInt64]$PhysicalBlock
-  )
-
-  Write-Le32 -Bytes $Bytes -Offset ($Offset + 0x00) -Value $Flags
-  Write-Le32 -Bytes $Bytes -Offset ($Offset + 0x04) -Value $ApfsBlockSize
-  Write-Le64 -Bytes $Bytes -Offset ($Offset + 0x08) -Value $PhysicalBlock
-}
-
-function Write-OmapRootNode {
-  param(
-    [byte[]]$Bytes,
-    [int]$BaseOffset
-  )
-
-  $tableLength = 4
-  $keyAreaStart = $BaseOffset + 0x38 + $tableLength
-  $valueAreaEnd = $BaseOffset + $ApfsBlockSize - $BtreeInfoSize
-  $valueOffset = $valueAreaEnd - 8
-
-  Write-ObjectHeader -Bytes $Bytes -BaseOffset $BaseOffset -Oid $OmapRootBlock -Xid $CurrentCheckpointXid -Type 3 -Subtype 0x0B
-  Write-Le16 -Bytes $Bytes -Offset ($BaseOffset + 0x20) -Value 0x0005
-  Write-Le16 -Bytes $Bytes -Offset ($BaseOffset + 0x22) -Value 1
-  Write-Le32 -Bytes $Bytes -Offset ($BaseOffset + 0x24) -Value 1
-  Write-Le16 -Bytes $Bytes -Offset ($BaseOffset + 0x28) -Value 0
-  Write-Le16 -Bytes $Bytes -Offset ($BaseOffset + 0x2A) -Value $tableLength
-  Write-Le16 -Bytes $Bytes -Offset ($BaseOffset + 0x2C) -Value 0
-  Write-Le16 -Bytes $Bytes -Offset ($BaseOffset + 0x2E) -Value 0
-  Write-Le16 -Bytes $Bytes -Offset ($BaseOffset + 0x30) -Value 0xFFFF
-  Write-Le16 -Bytes $Bytes -Offset ($BaseOffset + 0x32) -Value 0
-  Write-Le16 -Bytes $Bytes -Offset ($BaseOffset + 0x34) -Value 0xFFFF
-  Write-Le16 -Bytes $Bytes -Offset ($BaseOffset + 0x36) -Value 0
-
-  Write-Le16 -Bytes $Bytes -Offset ($BaseOffset + 0x38) -Value 0
-  Write-Le16 -Bytes $Bytes -Offset ($BaseOffset + 0x3A) -Value ([UInt16](($BaseOffset + $ApfsBlockSize - $BtreeInfoSize) - $valueOffset))
-  Write-OmapKey -Bytes $Bytes -Offset $keyAreaStart -Oid $VolumeObjectId -Xid 20
-  Write-Le64 -Bytes $Bytes -Offset $valueOffset -Value $OmapLeafBlock
-  Write-BtreeInfoFooter -Bytes $Bytes -BaseOffset $BaseOffset -KeySize 16 -ValueSize 8 -KeyCount 2 -NodeCount 2
-}
-
-function Write-OmapLeafNode {
-  param(
-    [byte[]]$Bytes,
-    [int]$BaseOffset,
-    [UInt32]$LatestFlags
-  )
-
-  $records = @(
-    @{ Oid = $VolumeObjectId; Xid = [UInt64]20; Flags = [UInt32]0; PhysicalBlock = $LegacyVolumeBlock },
-    @{ Oid = $VolumeObjectId; Xid = $CurrentCheckpointXid; Flags = $LatestFlags; PhysicalBlock = $CurrentVolumeBlock }
-  )
-
-  $tableLength = [UInt16]($records.Count * 4)
-  $keyAreaStart = $BaseOffset + 0x38 + $tableLength
-  $valueAreaEnd = $BaseOffset + $ApfsBlockSize
-
-  Write-ObjectHeader -Bytes $Bytes -BaseOffset $BaseOffset -Oid $OmapLeafBlock -Xid $CurrentCheckpointXid -Type 3 -Subtype 0x0B
-  Write-Le16 -Bytes $Bytes -Offset ($BaseOffset + 0x20) -Value 0x0006
-  Write-Le16 -Bytes $Bytes -Offset ($BaseOffset + 0x22) -Value 0
-  Write-Le32 -Bytes $Bytes -Offset ($BaseOffset + 0x24) -Value $records.Count
-  Write-Le16 -Bytes $Bytes -Offset ($BaseOffset + 0x28) -Value 0
-  Write-Le16 -Bytes $Bytes -Offset ($BaseOffset + 0x2A) -Value $tableLength
-  Write-Le16 -Bytes $Bytes -Offset ($BaseOffset + 0x2C) -Value 0
-  Write-Le16 -Bytes $Bytes -Offset ($BaseOffset + 0x2E) -Value 0
-  Write-Le16 -Bytes $Bytes -Offset ($BaseOffset + 0x30) -Value 0xFFFF
-  Write-Le16 -Bytes $Bytes -Offset ($BaseOffset + 0x32) -Value 0
-  Write-Le16 -Bytes $Bytes -Offset ($BaseOffset + 0x34) -Value 0xFFFF
-  Write-Le16 -Bytes $Bytes -Offset ($BaseOffset + 0x36) -Value 0
-
-  for ($index = 0; $index -lt $records.Count; $index++) {
-    $tocOffset = $BaseOffset + 0x38 + ($index * 4)
-    $keyOffset = [UInt16]($index * 16)
-    $valueOffset = [UInt16](($index + 1) * 16)
-    $keyWriteOffset = $keyAreaStart + $keyOffset
-    $valueWriteOffset = $valueAreaEnd - $valueOffset
-
-    Write-Le16 -Bytes $Bytes -Offset ($tocOffset + 0x00) -Value $keyOffset
-    Write-Le16 -Bytes $Bytes -Offset ($tocOffset + 0x02) -Value $valueOffset
-    Write-OmapKey -Bytes $Bytes -Offset $keyWriteOffset -Oid $records[$index].Oid -Xid $records[$index].Xid
-    Write-OmapValue -Bytes $Bytes -Offset $valueWriteOffset -Flags $records[$index].Flags -PhysicalBlock $records[$index].PhysicalBlock
-  }
-}
-
-function Write-VolumeSuperblock {
-  param(
-    [byte[]]$Bytes,
-    [int]$BaseOffset,
-    [UInt64]$Xid,
-    [UInt64]$IncompatibleFeatures,
-    [UInt16]$Role,
-    [string]$Name
-  )
-
-  Write-ObjectHeader -Bytes $Bytes -BaseOffset $BaseOffset -Oid $VolumeObjectId -Xid $Xid -Type 0x0D -Subtype 0
-  Write-Ascii -Bytes $Bytes -Offset ($BaseOffset + 0x20) -Text "APSB"
-  Write-Le32 -Bytes $Bytes -Offset ($BaseOffset + 0x24) -Value 0
-  Write-Le64 -Bytes $Bytes -Offset ($BaseOffset + 0x28) -Value 0
-  Write-Le64 -Bytes $Bytes -Offset ($BaseOffset + 0x30) -Value 0
-  Write-Le64 -Bytes $Bytes -Offset ($BaseOffset + 0x38) -Value $IncompatibleFeatures
-  Write-Bytes -Target $Bytes -Offset ($BaseOffset + 0xF0) -Source ([byte[]](0x50,0x51,0x52,0x53,0x60,0x61,0x62,0x63,0x70,0x71,0x72,0x73,0x80,0x81,0x82,0x83))
-  Write-Ascii -Bytes $Bytes -Offset ($BaseOffset + 0x2C0) -Text $Name
-  Write-Le16 -Bytes $Bytes -Offset ($BaseOffset + 0x3C4) -Value $Role
-}
-
-function New-DirectFixture {
-  param(
-    [string]$Path,
-    [string]$VolumeName,
-    [UInt64]$IncompatibleFeatures,
-    [UInt16]$Role,
-    [UInt32]$LatestFlags = 0
-  )
-
-  $bytes = New-Object byte[] ($ApfsBlockSize * 8)
-  Write-NxSuperblock -Bytes $bytes -BaseOffset 0 -Xid 1 -BlockCount 8
-  Write-NxSuperblock -Bytes $bytes -BaseOffset $ApfsBlockSize -Xid $CurrentCheckpointXid -BlockCount 8
-  Write-OmapSuperblock -Bytes $bytes -BaseOffset ($ApfsBlockSize * [int]$OmapObjectBlock)
-  Write-OmapRootNode -Bytes $bytes -BaseOffset ($ApfsBlockSize * [int]$OmapRootBlock)
-  Write-OmapLeafNode -Bytes $bytes -BaseOffset ($ApfsBlockSize * [int]$OmapLeafBlock) -LatestFlags $LatestFlags
-  Write-VolumeSuperblock -Bytes $bytes -BaseOffset ($ApfsBlockSize * [int]$LegacyVolumeBlock) -Xid 20 -IncompatibleFeatures 1 -Role 0x0040 -Name "Legacy Data"
-  Write-VolumeSuperblock -Bytes $bytes -BaseOffset ($ApfsBlockSize * [int]$CurrentVolumeBlock) -Xid $CurrentCheckpointXid -IncompatibleFeatures $IncompatibleFeatures -Role $Role -Name $VolumeName
-  [System.IO.File]::WriteAllBytes($Path, $bytes)
-}
-
-function New-GptFixture {
-  param([string]$Path)
-
-  $logicalBlockSize = 512
-  $bytes = New-Object byte[] ($logicalBlockSize * 256)
-  $firstLba = [UInt64]40
-  $lastLba = [UInt64]103
-
-  Write-Ascii -Bytes $bytes -Offset $logicalBlockSize -Text "EFI PART"
-  Write-Le32 -Bytes $bytes -Offset ($logicalBlockSize + 8) -Value 0x00010000
-  Write-Le32 -Bytes $bytes -Offset ($logicalBlockSize + 12) -Value 92
-  Write-Le64 -Bytes $bytes -Offset ($logicalBlockSize + 24) -Value 1
-  Write-Le64 -Bytes $bytes -Offset ($logicalBlockSize + 32) -Value 255
-  Write-Le64 -Bytes $bytes -Offset ($logicalBlockSize + 40) -Value 34
-  Write-Le64 -Bytes $bytes -Offset ($logicalBlockSize + 48) -Value 200
-  Write-Le64 -Bytes $bytes -Offset ($logicalBlockSize + 72) -Value 2
-  Write-Le32 -Bytes $bytes -Offset ($logicalBlockSize + 80) -Value 1
-  Write-Le32 -Bytes $bytes -Offset ($logicalBlockSize + 84) -Value 128
-
-  $partitionOffset = $logicalBlockSize * 2
-  Write-Bytes -Target $bytes -Offset $partitionOffset -Source ([byte[]](0xEF,0x57,0x34,0x7C,0x00,0x00,0xAA,0x11,0xAA,0x11,0x00,0x30,0x65,0x43,0xEC,0xAC))
-  Write-Bytes -Target $bytes -Offset ($partitionOffset + 16) -Source ([byte[]](0x91,0x92,0x93,0x94,0xA0,0xA1,0xA2,0xA3,0xB0,0xB1,0xB2,0xB3,0xC0,0xC1,0xC2,0xC3))
-  Write-Le64 -Bytes $bytes -Offset ($partitionOffset + 32) -Value $firstLba
-  Write-Le64 -Bytes $bytes -Offset ($partitionOffset + 40) -Value $lastLba
-  Write-Utf16Le -Bytes $bytes -Offset ($partitionOffset + 56) -Text "Orchard GPT"
-
-  $containerOffset = [int]($firstLba * $logicalBlockSize)
-  $containerPath = Join-Path $samplesDir "_tmp_direct.img"
-  New-DirectFixture -Path $containerPath -VolumeName "GPT Data" -IncompatibleFeatures 1 -Role 0x0040
-  $containerBytes = [System.IO.File]::ReadAllBytes($containerPath)
-  [Array]::Copy($containerBytes, 0, $bytes, $containerOffset, $containerBytes.Length)
-  Remove-Item -LiteralPath $containerPath -Force
-
-  [System.IO.File]::WriteAllBytes($Path, $bytes)
-}
-
 New-Item -ItemType Directory -Force -Path $samplesDir | Out-Null
 
-New-DirectFixture -Path (Join-Path $samplesDir "plain-user-data.img") -VolumeName "Orchard Data" -IncompatibleFeatures 1 -Role 0x0040
-New-GptFixture -Path (Join-Path $samplesDir "gpt-user-data.img")
-New-DirectFixture -Path (Join-Path $samplesDir "snapshot-volume.img") -VolumeName "Snapshot Data" -IncompatibleFeatures 3 -Role 0x0040
-New-DirectFixture -Path (Join-Path $samplesDir "sealed-system.img") -VolumeName "System" -IncompatibleFeatures 0x21 -Role 0x0001
+$python = @'
+from pathlib import Path
+import struct
+import sys
+
+samples_dir = Path(sys.argv[1])
+
+APFS_BLOCK_SIZE = 4096
+BLOCK_COUNT = 15
+BTREE_INFO_SIZE = 40
+
+CONTAINER_OMAP_OBJECT_BLOCK = 2
+CONTAINER_OMAP_ROOT_BLOCK = 3
+CONTAINER_OMAP_LEAF_BLOCK = 4
+LEGACY_VOLUME_BLOCK = 5
+CURRENT_VOLUME_BLOCK = 6
+VOLUME_OMAP_BLOCK = 7
+VOLUME_OMAP_ROOT_BLOCK = 8
+FS_TREE_BLOCK = 9
+ALPHA_DATA_BLOCK1 = 10
+ALPHA_DATA_BLOCK2 = 11
+NOTE_DATA_BLOCK = 12
+SPARSE_DATA_BLOCK1 = 13
+SPARSE_DATA_BLOCK2 = 14
+
+VOLUME_OBJECT_ID = 77
+VOLUME_OMAP_OBJECT_ID = 88
+FS_TREE_OBJECT_ID = 200
+CURRENT_CHECKPOINT_XID = 42
+
+ROOT_INODE_ID = 2
+ALPHA_INODE_ID = 20
+DOCS_INODE_ID = 30
+NOTE_INODE_ID = 31
+SPARSE_INODE_ID = 40
+COMPRESSED_INODE_ID = 50
+EMPTY_INODE_ID = 60
+
+VOL_INCOMPAT_CASE_INSENSITIVE = 0x1
+VOL_INCOMPAT_DATALLESS_SNAPS = 0x2
+VOL_INCOMPAT_SEALED = 0x20
+VOL_ROLE_SYSTEM = 0x0001
+VOL_ROLE_DATA = 0x0040
+
+OBJ_TYPE_NXSB = 0x01
+OBJ_TYPE_BTREE_NODE = 0x03
+OBJ_TYPE_OMAP = 0x0B
+OBJ_TYPE_FS = 0x0D
+
+BTN_ROOT = 0x0001
+BTN_LEAF = 0x0002
+BTN_FIXED_KV = 0x0004
+BTN_OFF_INVALID = 0xFFFF
+
+OMAP_VALUE_DELETED = 0x00000001
+FS_TYPE_INODE = 3
+FS_TYPE_XATTR = 4
+FS_TYPE_FILE_EXTENT = 8
+FS_TYPE_DIR_REC = 9
+SPARSE_FLAG = 0x00000200
+
+ALPHA_EXTENT1 = b"Hello "
+ALPHA_EXTENT2 = b"Orchard\n"
+NOTE_TEXT = b"Nested note\n"
+SPARSE_EXTENT1 = b"ABCD"
+SPARSE_EXTENT2 = b"WXYZ"
+COMPRESSED_TEXT = b"Compressed orchard\n"
+
+def w16(buf, off, value): struct.pack_into("<H", buf, off, value)
+def w32(buf, off, value): struct.pack_into("<I", buf, off, value)
+def w64(buf, off, value): struct.pack_into("<Q", buf, off, value)
+def wa(buf, off, text): buf[off:off+len(text)] = text.encode("ascii") if isinstance(text, str) else text
+def wutf16(buf, off, text): buf[off:off+len(text.encode("utf-16-le"))] = text.encode("utf-16-le")
+def wbytes(buf, off, raw): buf[off:off+len(raw)] = raw
+
+def object_header(buf, base, oid, xid, typ, subtype):
+    w64(buf, base + 0x00, 0)
+    w64(buf, base + 0x08, oid)
+    w64(buf, base + 0x10, xid)
+    w32(buf, base + 0x18, typ)
+    w32(buf, base + 0x1C, subtype)
+
+def nxsb(buf, base, xid):
+    object_header(buf, base, base // APFS_BLOCK_SIZE, xid, OBJ_TYPE_NXSB, 0)
+    wa(buf, base + 0x20, "NXSB")
+    w32(buf, base + 0x24, APFS_BLOCK_SIZE)
+    w64(buf, base + 0x28, BLOCK_COUNT)
+    wbytes(buf, base + 0x48, bytes([0x10,0x11,0x12,0x13,0x20,0x21,0x22,0x23,0x30,0x31,0x32,0x33,0x40,0x41,0x42,0x43]))
+    w64(buf, base + 0x60, xid + 1)
+    w32(buf, base + 0x68, 1)
+    w64(buf, base + 0x70, 1)
+    w64(buf, base + 0x98, 5)
+    w64(buf, base + 0xA0, CONTAINER_OMAP_OBJECT_BLOCK)
+    w64(buf, base + 0xA8, 7)
+    w32(buf, base + 0xB4, 100)
+    w64(buf, base + 0xB8, VOLUME_OBJECT_ID)
+
+def omap_sb(buf, base, oid, xid, tree_oid):
+    object_header(buf, base, oid, xid, OBJ_TYPE_OMAP, OBJ_TYPE_OMAP)
+    w32(buf, base + 0x28, OBJ_TYPE_OMAP)
+    w64(buf, base + 0x30, tree_oid)
+
+def btree_footer(buf, base, key_size, value_size, key_count, node_count):
+    footer = base + APFS_BLOCK_SIZE - BTREE_INFO_SIZE
+    w32(buf, footer + 0x04, APFS_BLOCK_SIZE)
+    w32(buf, footer + 0x08, key_size)
+    w32(buf, footer + 0x0C, value_size)
+    w32(buf, footer + 0x10, key_size)
+    w32(buf, footer + 0x14, value_size)
+    w64(buf, footer + 0x18, key_count)
+    w64(buf, footer + 0x20, node_count)
+
+def omap_key(buf, off, oid, xid):
+    w64(buf, off + 0x00, oid)
+    w64(buf, off + 0x08, xid)
+
+def omap_value(buf, off, flags, physical_block):
+    w32(buf, off + 0x00, flags)
+    w32(buf, off + 0x04, APFS_BLOCK_SIZE)
+    w64(buf, off + 0x08, physical_block)
+
+def omap_root(buf, base, oid, xid, min_oid, min_xid, child_block):
+    table_len = 4
+    key_start = base + 0x38 + table_len
+    value_end = base + APFS_BLOCK_SIZE - BTREE_INFO_SIZE
+    value_off = value_end - 8
+    object_header(buf, base, oid, xid, OBJ_TYPE_BTREE_NODE, OBJ_TYPE_OMAP)
+    w16(buf, base + 0x20, BTN_ROOT | BTN_FIXED_KV)
+    w16(buf, base + 0x22, 1)
+    w32(buf, base + 0x24, 1)
+    w16(buf, base + 0x2A, table_len)
+    w16(buf, base + 0x30, BTN_OFF_INVALID)
+    w16(buf, base + 0x34, BTN_OFF_INVALID)
+    w16(buf, base + 0x38, 0)
+    w16(buf, base + 0x3A, value_end - value_off)
+    omap_key(buf, key_start, min_oid, min_xid)
+    w64(buf, value_off, child_block)
+    btree_footer(buf, base, 16, 8, 3, 2)
+
+def omap_leaf(buf, base, oid, xid, records, root=False):
+    table_len = len(records) * 4
+    key_start = base + 0x38 + table_len
+    value_end = base + APFS_BLOCK_SIZE - (BTREE_INFO_SIZE if root else 0)
+    object_header(buf, base, oid, xid, OBJ_TYPE_BTREE_NODE, OBJ_TYPE_OMAP)
+    w16(buf, base + 0x20, (BTN_ROOT if root else 0) | BTN_LEAF | BTN_FIXED_KV)
+    w32(buf, base + 0x24, len(records))
+    w16(buf, base + 0x2A, table_len)
+    w16(buf, base + 0x30, BTN_OFF_INVALID)
+    w16(buf, base + 0x34, BTN_OFF_INVALID)
+    for i, (roid, rxid, rflags, rblock) in enumerate(records):
+        toc = base + 0x38 + i * 4
+        key_off = i * 16
+        value_off = (i + 1) * 16
+        w16(buf, toc + 0x00, key_off)
+        w16(buf, toc + 0x02, value_off)
+        omap_key(buf, key_start + key_off, roid, rxid)
+        omap_value(buf, value_end - value_off, rflags, rblock)
+    if root:
+        btree_footer(buf, base, 16, 16, len(records), 1)
+
+def fs_header_value(object_id, record_type): return object_id | (record_type << 60)
+def inode_key(object_id): return struct.pack("<Q", fs_header_value(object_id, FS_TYPE_INODE))
+def named_key(object_id, record_type, name): return struct.pack("<QH", fs_header_value(object_id, record_type), len(name)) + name.encode("ascii")
+def extent_key(object_id, logical): return struct.pack("<QQ", fs_header_value(object_id, FS_TYPE_FILE_EXTENT), logical)
+def inode_value(parent_id, logical_size, allocated_size, flags, child_count, mode):
+    data = bytearray(0x60)
+    w64(data, 0x00, parent_id); w64(data, 0x10, allocated_size); w64(data, 0x18, flags)
+    w32(data, 0x20, child_count); w16(data, 0x24, mode); w64(data, 0x58, logical_size)
+    return bytes(data)
+def dir_value(file_id): return struct.pack("<QH", file_id, 0)
+def extent_value(length, physical_block): return struct.pack("<QQQ", length, physical_block, 0)
+def compression_payload(text): return b"cmpf" + struct.pack("<IQ", 9, len(text)) + text
+def xattr_value(data): return struct.pack("<HHI", 0, 0, len(data)) + data
+
+def variable_root_leaf(buf, base, oid, xid, subtype, records):
+    table_len = len(records) * 8
+    key_start = base + 0x38 + table_len
+    value_end = base + APFS_BLOCK_SIZE - BTREE_INFO_SIZE
+    object_header(buf, base, oid, xid, OBJ_TYPE_BTREE_NODE, subtype)
+    w16(buf, base + 0x20, BTN_ROOT | BTN_LEAF)
+    w32(buf, base + 0x24, len(records))
+    w16(buf, base + 0x2A, table_len)
+    w16(buf, base + 0x30, BTN_OFF_INVALID)
+    w16(buf, base + 0x34, BTN_OFF_INVALID)
+    key_off = 0
+    value_off = 0
+    longest_key = 0
+    longest_value = 0
+    for i, (key, value) in enumerate(records):
+        toc = base + 0x38 + i * 8
+        value_off += len(value)
+        w16(buf, toc + 0x00, key_off)
+        w16(buf, toc + 0x02, len(key))
+        w16(buf, toc + 0x04, value_off)
+        w16(buf, toc + 0x06, len(value))
+        wbytes(buf, key_start + key_off, key)
+        wbytes(buf, value_end - value_off, value)
+        key_off += len(key)
+        longest_key = max(longest_key, len(key))
+        longest_value = max(longest_value, len(value))
+    footer = base + APFS_BLOCK_SIZE - BTREE_INFO_SIZE
+    w32(buf, footer + 0x04, APFS_BLOCK_SIZE)
+    w32(buf, footer + 0x10, longest_key)
+    w32(buf, footer + 0x14, longest_value)
+    w64(buf, footer + 0x18, len(records))
+    w64(buf, footer + 0x20, 1)
+
+def volume_superblock(buf, base, xid, incompat, role, name):
+    object_header(buf, base, VOLUME_OBJECT_ID, xid, OBJ_TYPE_FS, 0)
+    wa(buf, base + 0x20, "APSB")
+    w64(buf, base + 0x38, incompat)
+    w32(buf, base + 0x74, OBJ_TYPE_FS)
+    w64(buf, base + 0x80, VOLUME_OMAP_OBJECT_ID)
+    w64(buf, base + 0x88, FS_TREE_OBJECT_ID)
+    wbytes(buf, base + 0xF0, bytes([0x50,0x51,0x52,0x53,0x60,0x61,0x62,0x63,0x70,0x71,0x72,0x73,0x80,0x81,0x82,0x83]))
+    wa(buf, base + 0x2C0, name)
+    w16(buf, base + 0x3C4, role)
+
+def build_records():
+    return [
+        (inode_key(ROOT_INODE_ID), inode_value(ROOT_INODE_ID, 0, 0, 0, 4, 0x4000)),
+        (inode_key(ALPHA_INODE_ID), inode_value(ROOT_INODE_ID, len(ALPHA_EXTENT1)+len(ALPHA_EXTENT2), len(ALPHA_EXTENT1)+len(ALPHA_EXTENT2), 0, 0, 0x8000)),
+        (inode_key(DOCS_INODE_ID), inode_value(ROOT_INODE_ID, 0, 0, 0, 2, 0x4000)),
+        (inode_key(NOTE_INODE_ID), inode_value(DOCS_INODE_ID, len(NOTE_TEXT), len(NOTE_TEXT), 0, 0, 0x8000)),
+        (inode_key(SPARSE_INODE_ID), inode_value(ROOT_INODE_ID, 12, 8, SPARSE_FLAG, 0, 0x8000)),
+        (inode_key(COMPRESSED_INODE_ID), inode_value(ROOT_INODE_ID, len(COMPRESSED_TEXT), 0, 0, 0, 0x8000)),
+        (inode_key(EMPTY_INODE_ID), inode_value(DOCS_INODE_ID, 0, 0, 0, 0, 0x8000)),
+        (named_key(ROOT_INODE_ID, FS_TYPE_DIR_REC, "alpha.txt"), dir_value(ALPHA_INODE_ID)),
+        (named_key(ROOT_INODE_ID, FS_TYPE_DIR_REC, "compressed.txt"), dir_value(COMPRESSED_INODE_ID)),
+        (named_key(ROOT_INODE_ID, FS_TYPE_DIR_REC, "docs"), dir_value(DOCS_INODE_ID)),
+        (named_key(ROOT_INODE_ID, FS_TYPE_DIR_REC, "holes.bin"), dir_value(SPARSE_INODE_ID)),
+        (named_key(DOCS_INODE_ID, FS_TYPE_DIR_REC, "empty.txt"), dir_value(EMPTY_INODE_ID)),
+        (named_key(DOCS_INODE_ID, FS_TYPE_DIR_REC, "note.txt"), dir_value(NOTE_INODE_ID)),
+        (extent_key(ALPHA_INODE_ID, 0), extent_value(len(ALPHA_EXTENT1), ALPHA_DATA_BLOCK1)),
+        (extent_key(ALPHA_INODE_ID, len(ALPHA_EXTENT1)), extent_value(len(ALPHA_EXTENT2), ALPHA_DATA_BLOCK2)),
+        (extent_key(NOTE_INODE_ID, 0), extent_value(len(NOTE_TEXT), NOTE_DATA_BLOCK)),
+        (extent_key(SPARSE_INODE_ID, 0), extent_value(len(SPARSE_EXTENT1), SPARSE_DATA_BLOCK1)),
+        (extent_key(SPARSE_INODE_ID, 8), extent_value(len(SPARSE_EXTENT2), SPARSE_DATA_BLOCK2)),
+        (named_key(COMPRESSED_INODE_ID, FS_TYPE_XATTR, "com.apple.decmpfs"), xattr_value(compression_payload(COMPRESSED_TEXT))),
+    ]
+
+def build_direct(volume_name="Orchard Data", incompat=VOL_INCOMPAT_CASE_INSENSITIVE, role=VOL_ROLE_DATA, delete_latest=False):
+    buf = bytearray(APFS_BLOCK_SIZE * BLOCK_COUNT)
+    nxsb(buf, 0, 1)
+    nxsb(buf, APFS_BLOCK_SIZE, CURRENT_CHECKPOINT_XID)
+    omap_sb(buf, APFS_BLOCK_SIZE * CONTAINER_OMAP_OBJECT_BLOCK, CONTAINER_OMAP_OBJECT_BLOCK, CURRENT_CHECKPOINT_XID, CONTAINER_OMAP_ROOT_BLOCK)
+    omap_root(buf, APFS_BLOCK_SIZE * CONTAINER_OMAP_ROOT_BLOCK, CONTAINER_OMAP_ROOT_BLOCK, CURRENT_CHECKPOINT_XID, VOLUME_OBJECT_ID, 20, CONTAINER_OMAP_LEAF_BLOCK)
+    omap_leaf(buf, APFS_BLOCK_SIZE * CONTAINER_OMAP_LEAF_BLOCK, CONTAINER_OMAP_LEAF_BLOCK, CURRENT_CHECKPOINT_XID, [
+        (VOLUME_OBJECT_ID, 20, 0, LEGACY_VOLUME_BLOCK),
+        (VOLUME_OBJECT_ID, CURRENT_CHECKPOINT_XID, OMAP_VALUE_DELETED if delete_latest else 0, CURRENT_VOLUME_BLOCK),
+        (VOLUME_OMAP_OBJECT_ID, CURRENT_CHECKPOINT_XID, 0, VOLUME_OMAP_BLOCK),
+    ])
+    volume_superblock(buf, APFS_BLOCK_SIZE * LEGACY_VOLUME_BLOCK, 20, VOL_INCOMPAT_CASE_INSENSITIVE, VOL_ROLE_DATA, "Legacy Data")
+    volume_superblock(buf, APFS_BLOCK_SIZE * CURRENT_VOLUME_BLOCK, CURRENT_CHECKPOINT_XID, incompat, role, volume_name)
+    omap_sb(buf, APFS_BLOCK_SIZE * VOLUME_OMAP_BLOCK, VOLUME_OMAP_OBJECT_ID, CURRENT_CHECKPOINT_XID, VOLUME_OMAP_ROOT_BLOCK)
+    omap_leaf(buf, APFS_BLOCK_SIZE * VOLUME_OMAP_ROOT_BLOCK, VOLUME_OMAP_ROOT_BLOCK, CURRENT_CHECKPOINT_XID, [(FS_TREE_OBJECT_ID, CURRENT_CHECKPOINT_XID, 0, FS_TREE_BLOCK)], root=True)
+    variable_root_leaf(buf, APFS_BLOCK_SIZE * FS_TREE_BLOCK, FS_TREE_OBJECT_ID, CURRENT_CHECKPOINT_XID, OBJ_TYPE_FS, build_records())
+    wa(buf, APFS_BLOCK_SIZE * ALPHA_DATA_BLOCK1, ALPHA_EXTENT1)
+    wa(buf, APFS_BLOCK_SIZE * ALPHA_DATA_BLOCK2, ALPHA_EXTENT2)
+    wa(buf, APFS_BLOCK_SIZE * NOTE_DATA_BLOCK, NOTE_TEXT)
+    wa(buf, APFS_BLOCK_SIZE * SPARSE_DATA_BLOCK1, SPARSE_EXTENT1)
+    wa(buf, APFS_BLOCK_SIZE * SPARSE_DATA_BLOCK2, SPARSE_EXTENT2)
+    return bytes(buf)
+
+def build_gpt():
+    logical = 512
+    first_lba = 40
+    last_lba = 159
+    buf = bytearray(logical * 256)
+    wa(buf, logical, "EFI PART")
+    w32(buf, logical + 8, 0x00010000)
+    w32(buf, logical + 12, 92)
+    w64(buf, logical + 24, 1)
+    w64(buf, logical + 32, 255)
+    w64(buf, logical + 40, 34)
+    w64(buf, logical + 48, 200)
+    w64(buf, logical + 72, 2)
+    w32(buf, logical + 80, 1)
+    w32(buf, logical + 84, 128)
+    part = logical * 2
+    wbytes(buf, part, bytes([0xEF,0x57,0x34,0x7C,0x00,0x00,0xAA,0x11,0xAA,0x11,0x00,0x30,0x65,0x43,0xEC,0xAC]))
+    wbytes(buf, part + 16, bytes([0x91,0x92,0x93,0x94,0xA0,0xA1,0xA2,0xA3,0xB0,0xB1,0xB2,0xB3,0xC0,0xC1,0xC2,0xC3]))
+    w64(buf, part + 32, first_lba)
+    w64(buf, part + 40, last_lba)
+    wutf16(buf, part + 56, "Orchard GPT")
+    container = build_direct(volume_name="GPT Data")
+    buf[first_lba * logical:first_lba * logical + len(container)] = container
+    return bytes(buf)
+
+(samples_dir / "plain-user-data.img").write_bytes(build_direct())
+(samples_dir / "gpt-user-data.img").write_bytes(build_gpt())
+(samples_dir / "snapshot-volume.img").write_bytes(build_direct(volume_name="Snapshot Data", incompat=VOL_INCOMPAT_CASE_INSENSITIVE | VOL_INCOMPAT_DATALLESS_SNAPS))
+(samples_dir / "sealed-system.img").write_bytes(build_direct(volume_name="System", incompat=VOL_INCOMPAT_CASE_INSENSITIVE | VOL_INCOMPAT_SEALED, role=VOL_ROLE_SYSTEM))
+'@
+
+$python | python - $samplesDir

@@ -7,26 +7,7 @@
 #include "orchard/apfs/probe.h"
 
 namespace orchard::apfs {
-namespace {
-
-constexpr std::uint64_t kNxIncompatFusion = 0x100ULL;
-
-constexpr std::uint64_t kVolumeIncompatCaseInsensitive = 0x1ULL;
-constexpr std::uint64_t kVolumeIncompatDatalessSnaps = 0x2ULL;
-constexpr std::uint64_t kVolumeIncompatEncRolled = 0x4ULL;
-constexpr std::uint64_t kVolumeIncompatNormalizationInsensitive = 0x8ULL;
-constexpr std::uint64_t kVolumeIncompatIncompleteRestore = 0x10ULL;
-constexpr std::uint64_t kVolumeIncompatSealed = 0x20ULL;
-
-constexpr std::uint16_t kRoleSystem = 0x0001U;
-constexpr std::uint16_t kRoleUser = 0x0002U;
-constexpr std::uint16_t kRoleRecovery = 0x0004U;
-constexpr std::uint16_t kRoleVm = 0x0008U;
-constexpr std::uint16_t kRolePreboot = 0x0010U;
-constexpr std::uint16_t kRoleInstaller = 0x0020U;
-constexpr std::uint16_t kRoleData = 0x0040U;
-
-} // namespace
+namespace {} // namespace
 
 blockio::Error MakeApfsError(const blockio::ErrorCode code, std::string message) {
   return blockio::Error{
@@ -35,8 +16,7 @@ blockio::Error MakeApfsError(const blockio::ErrorCode code, std::string message)
   };
 }
 
-bool HasRange(const std::span<const std::uint8_t> bytes,
-              const std::size_t offset,
+bool HasRange(const std::span<const std::uint8_t> bytes, const std::size_t offset,
               const std::size_t length) noexcept {
   return offset <= bytes.size() && length <= bytes.size() - offset;
 }
@@ -124,6 +104,7 @@ bool IsReasonableApfsBlockSize(const std::uint32_t block_size) noexcept {
   return (block_size & (block_size - 1U)) == 0U;
 }
 
+// NOLINTBEGIN(bugprone-easily-swappable-parameters)
 FeatureFlags MakeContainerFeatures(const std::uint64_t compatible,
                                    const std::uint64_t readonly_compatible,
                                    const std::uint64_t incompatible) {
@@ -168,29 +149,30 @@ FeatureFlags MakeVolumeFeatures(const std::uint64_t compatible,
 
   return features;
 }
+// NOLINTEND(bugprone-easily-swappable-parameters)
 
 std::vector<std::string> DecodeVolumeRoles(const std::uint16_t role) {
   std::vector<std::string> roles;
 
-  if ((role & kRoleSystem) != 0U) {
+  if ((role & kVolumeRoleSystem) != 0U) {
     roles.emplace_back("system");
   }
-  if ((role & kRoleUser) != 0U) {
+  if ((role & kVolumeRoleUser) != 0U) {
     roles.emplace_back("user");
   }
-  if ((role & kRoleRecovery) != 0U) {
+  if ((role & kVolumeRoleRecovery) != 0U) {
     roles.emplace_back("recovery");
   }
-  if ((role & kRoleVm) != 0U) {
+  if ((role & kVolumeRoleVm) != 0U) {
     roles.emplace_back("vm");
   }
-  if ((role & kRolePreboot) != 0U) {
+  if ((role & kVolumeRolePreboot) != 0U) {
     roles.emplace_back("preboot");
   }
-  if ((role & kRoleInstaller) != 0U) {
+  if ((role & kVolumeRoleInstaller) != 0U) {
     roles.emplace_back("installer");
   }
-  if ((role & kRoleData) != 0U) {
+  if ((role & kVolumeRoleData) != 0U) {
     roles.emplace_back("data");
   }
 
@@ -215,9 +197,8 @@ blockio::Result<ParsedNxSuperblock> ParseNxSuperblock(const std::span<const std:
   }
 
   ParsedNxSuperblock parsed;
-  parsed.features = MakeContainerFeatures(ReadLe64(block, 0x30U),
-                                          ReadLe64(block, 0x38U),
-                                          ReadLe64(block, 0x40U));
+  parsed.features =
+      MakeContainerFeatures(ReadLe64(block, 0x30U), ReadLe64(block, 0x38U), ReadLe64(block, 0x40U));
   parsed.block_size = block_size;
   parsed.block_count = ReadLe64(block, 0x28U);
   parsed.uuid = FormatRawUuid(std::span(block.begin() + 0x48U, 16U));
@@ -231,7 +212,8 @@ blockio::Result<ParsedNxSuperblock> ParseNxSuperblock(const std::span<const std:
 
   const auto max_file_systems = std::min<std::uint32_t>(ReadLe32(block, 0xB4U), 100U);
   for (std::uint32_t index = 0; index < max_file_systems; ++index) {
-    const auto entry_offset = static_cast<std::size_t>(0xB8U + (index * 8U));
+    const auto entry_offset =
+        static_cast<std::size_t>(0xB8ULL + (static_cast<std::uint64_t>(index) * 8ULL));
     if (!HasRange(block, entry_offset, 8U)) {
       break;
     }
@@ -245,9 +227,9 @@ blockio::Result<ParsedNxSuperblock> ParseNxSuperblock(const std::span<const std:
   return parsed;
 }
 
-blockio::Result<ParsedVolumeSuperblock> ParseVolumeSuperblock(
-    const std::span<const std::uint8_t> block) {
-  if (!HasRange(block, 0x400U, 8U) || !ProbeVolumeMagic(block)) {
+blockio::Result<ParsedVolumeSuperblock>
+ParseVolumeSuperblock(const std::span<const std::uint8_t> block) {
+  if (!HasRange(block, 0x448U, 8U) || !ProbeVolumeMagic(block)) {
     return MakeApfsError(blockio::ErrorCode::kInvalidFormat,
                          "Volume superblock magic is missing at the APFS object offset.");
   }
@@ -256,15 +238,26 @@ blockio::Result<ParsedVolumeSuperblock> ParseVolumeSuperblock(
   parsed.object_id = ReadLe64(block, 0x08U);
   parsed.xid = ReadLe64(block, 0x10U);
   parsed.filesystem_index = ReadLe32(block, 0x24U);
-  parsed.features = MakeVolumeFeatures(ReadLe64(block, 0x28U),
-                                       ReadLe64(block, 0x30U),
-                                       ReadLe64(block, 0x38U));
+  parsed.features =
+      MakeVolumeFeatures(ReadLe64(block, 0x28U), ReadLe64(block, 0x30U), ReadLe64(block, 0x38U));
+  parsed.root_tree_type = ReadLe32(block, 0x74U);
+  parsed.omap_oid = ReadLe64(block, 0x80U);
+  parsed.root_tree_oid = ReadLe64(block, 0x88U);
+  parsed.extentref_tree_oid = ReadLe64(block, 0x90U);
   parsed.uuid = FormatRawUuid(std::span(block.begin() + 0xF0U, 16U));
   parsed.name = DecodeUtf8Name(std::span(block.begin() + 0x2C0U, 256U));
   parsed.role = ReadLe16(block, 0x3C4U);
+  parsed.fext_tree_oid = ReadLe64(block, 0x408U);
+  parsed.doc_id_tree_oid = ReadLe64(block, 0x430U);
+  parsed.security_tree_oid = ReadLe64(block, 0x448U);
   parsed.role_names = DecodeVolumeRoles(parsed.role);
-  parsed.case_insensitive =
-      (parsed.features.incompatible & kVolumeIncompatCaseInsensitive) != 0U;
+  parsed.case_insensitive = (parsed.features.incompatible & kVolumeIncompatCaseInsensitive) != 0U;
+  parsed.snapshots_present = (parsed.features.incompatible & kVolumeIncompatDatalessSnaps) != 0U;
+  parsed.encryption_rolled = (parsed.features.incompatible & kVolumeIncompatEncRolled) != 0U;
+  parsed.incomplete_restore =
+      (parsed.features.incompatible & kVolumeIncompatIncompleteRestore) != 0U;
+  parsed.normalization_insensitive =
+      (parsed.features.incompatible & kVolumeIncompatNormalizationInsensitive) != 0U;
   parsed.sealed = (parsed.features.incompatible & kVolumeIncompatSealed) != 0U;
   return parsed;
 }

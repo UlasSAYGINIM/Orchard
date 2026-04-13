@@ -21,13 +21,15 @@ blockio::Result<ObjectHeader> ParseObjectHeader(const std::span<const std::uint8
   return header;
 }
 
+// NOLINTBEGIN(bugprone-easily-swappable-parameters)
 PhysicalObjectReader::PhysicalObjectReader(const blockio::Reader& reader,
                                            const std::uint64_t container_byte_offset,
                                            const std::uint32_t block_size)
     : reader_(&reader), container_byte_offset_(container_byte_offset), block_size_(block_size) {}
+// NOLINTEND(bugprone-easily-swappable-parameters)
 
-blockio::Result<ObjectBlock> PhysicalObjectReader::ReadPhysicalObject(
-    const std::uint64_t block_index) const {
+blockio::Result<ObjectBlock>
+PhysicalObjectReader::ReadPhysicalObject(const std::uint64_t block_index) const {
   if (reader_ == nullptr || block_size_ == 0U) {
     return MakeApfsError(blockio::ErrorCode::kInvalidArgument,
                          "Physical object reader is not configured with a valid APFS block size.");

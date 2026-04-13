@@ -45,10 +45,13 @@ public:
   static blockio::Result<OmapResolver> Load(const PhysicalObjectReader& reader,
                                             std::uint64_t omap_block_index);
 
-  [[nodiscard]] blockio::Result<OmapRecord> Lookup(std::uint64_t oid, std::uint64_t xid_limit) const;
+  [[nodiscard]] blockio::Result<OmapRecord> Lookup(std::uint64_t oid,
+                                                   std::uint64_t xid_limit) const;
   [[nodiscard]] blockio::Result<std::uint64_t> ResolveOidToBlock(std::uint64_t oid,
                                                                  std::uint64_t xid_limit) const;
-  [[nodiscard]] const OmapSuperblock& superblock() const noexcept { return superblock_; }
+  [[nodiscard]] const OmapSuperblock& superblock() const noexcept {
+    return superblock_;
+  }
 
 private:
   OmapResolver(const PhysicalObjectReader& reader, OmapSuperblock superblock);

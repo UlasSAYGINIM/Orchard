@@ -97,18 +97,20 @@ A task is only `Done` when all apply:
   Verification: Golden parser tests, fuzz smoke tests, offline inspect output.
 
 - `REQ-READ-003`
-  Status: `Planned`
+  Status: `Done`
   Requirement: Orchard resolves paths, enumerates directories, and reads file contents on supported volumes.
   Priority: `P0`
   Target: `M1`
   Verification: Golden file-tree tests and read checks against fixture corpus.
+  Evidence: `src/apfs-core/src/volume.cpp`, `path_lookup.cpp`, and `file_read.cpp` now resolve the volume omap and filesystem tree, support case-insensitive path lookup, directory enumeration, sparse-hole reads, and whole/range reads; `tests/unit/apfs_tests.cpp` validates root listing, nested lookup, not-found/non-directory failures, multi-extent reads, sparse reads, compressed reads, and zero-length files.
 
 - `REQ-READ-004`
-  Status: `Planned`
+  Status: `Done`
   Requirement: Orchard supports the compression algorithms required by the release corpus.
   Priority: `P0`
   Target: `M1`
   Verification: Compression corpus tests and file hash comparisons.
+  Evidence: `src/apfs-core/src/compression.cpp` adds the v1 baseline decoder for `decmpfs_uncompressed_attribute`; the synthetic corpus manifest now records that algorithm, regenerated fixtures contain inline compressed files, and `tests/unit/apfs_tests.cpp` plus `orchard_inspect_*` integration tests validate compressed reads and machine-readable output.
 
 - `REQ-READ-005`
   Status: `Planned`
@@ -120,11 +122,12 @@ A task is only `Done` when all apply:
 ### Policy and safety requirements
 
 - `REQ-POL-001`
-  Status: `Planned`
+  Status: `Done`
   Requirement: Every discovered volume is classified into `Hide`, `MountReadOnly`, `MountReadWrite`, or `Reject` with machine-readable reasons.
   Priority: `P0`
   Target: `M1`
   Verification: Policy matrix unit tests covering all supported and unsupported feature combinations.
+  Evidence: `src/apfs-core/src/policy.cpp` is now the standalone policy engine; `src/apfs-core/src/discovery.cpp` assigns policy results during discovery; `tests/unit/apfs_tests.cpp` verifies `MountReadWrite`, `MountReadOnly`, and `Reject` cases, and new integration tests cover snapshot and sealed-volume inspect output.
 
 - `REQ-POL-002`
   Status: `Planned`
@@ -297,16 +300,18 @@ A task is only `Done` when all apply:
 ### Review Snapshot
 
 - Review date: `2026-04-12`
-- Locally completed: `M1-T01`, `M1-T02`, `M1-T03`, `M1-T04`
+- Locally completed: `M1-T01`, `M1-T02`, `M1-T03`, `M1-T04`, `M1-T05`, `M1-T06`, `M1-T07`, `M1-T08`, `M1-T09`
 - Latest local verification:
   - `cmake --preset default`
   - `tests/corpus/generate-sample-fixtures.ps1`
   - `cmake --build --preset default --parallel`
-  - `cmake --build --preset default --target orchard_format_check orchard_lint`
+  - `cmake --build --preset default --target orchard_format_check`
+  - `cmake --build --preset default --target orchard_lint`
   - `ctest --preset default`
-  - Result: `7/7 tests passed`, `clang-format check passed`, `clang-tidy passed`
+  - Result: `9/9 tests passed`, `clang-format check passed`, `clang-tidy passed`
 - Key implementation note:
   - Volume superblocks are now resolved via the container object map; the bounded fallback block scan was removed from the primary discovery path.
+  - Synthetic fixtures now include a volume omap, filesystem-tree records, plain files, sparse files, and inline compressed files.
 
 ### Tasks
 
@@ -338,35 +343,40 @@ A task is only `Done` when all apply:
   Verification: Golden tree traversal tests and fuzz smoke.
   Evidence: `src/apfs-core/include/orchard/apfs/format.h`, `object.h`, `btree.h`, and `omap.h` split low-level APFS parsing into dedicated modules; `src/apfs-core/src/object.cpp`, `btree.cpp`, and `omap.cpp` implement typed object parsing, physical block reads, generic B-tree traversal, and omap lookup by `(oid, xid)`; `src/apfs-core/src/discovery.cpp` now resolves `fs_oid` values through the container omap before parsing volume superblocks; `tests/unit/apfs_tests.cpp` covers object-header parsing, leaf/internal node parsing, exact/fallback/deleted omap lookups, and end-to-end discovery; `tests/fuzz/fuzz_smoke.cpp` exercises object-header and node parsing on representative inputs.
 
-- [ ] `M1-T05` Inode, dentry, and path lookup
-  Status: `Planned`
+- [x] `M1-T05` Inode, dentry, and path lookup
+  Status: `Done`
   Depends on: `M1-T04`
   Done when: Orchard resolves absolute and relative paths and enumerates directory entries.
   Verification: File-tree goldens and path lookup tests.
+  Evidence: `src/apfs-core/include/orchard/apfs/volume.h`, `fs_keys.h`, `fs_records.h`, and `path_lookup.h` with matching `.cpp` implementations now resolve the volume omap, decode inode/dentry records, and walk paths against the filesystem tree; `tests/unit/apfs_tests.cpp` covers root enumeration, nested lookup, not-found, non-directory, and case-insensitive traversal.
 
-- [ ] `M1-T06` File extent and data read path
-  Status: `Planned`
+- [x] `M1-T06` File extent and data read path
+  Status: `Done`
   Depends on: `M1-T05`
   Done when: Orchard reads complete file contents correctly for the supported corpus.
   Verification: File hash comparisons.
+  Evidence: `src/apfs-core/include/orchard/apfs/file_read.h` and `src/apfs-core/src/file_read.cpp` now resolve extents, zero-fill sparse ranges, and support bounded reads; `tests/unit/apfs_tests.cpp` validates whole-file, range, sparse, and zero-length file reads.
 
-- [ ] `M1-T07` Compression support baseline
-  Status: `Planned`
+- [x] `M1-T07` Compression support baseline
+  Status: `Done`
   Depends on: `M1-T06`
   Done when: Required compression formats for the release corpus are readable.
   Verification: Compressed fixture test set.
+  Evidence: `src/apfs-core/include/orchard/apfs/compression.h` and `src/apfs-core/src/compression.cpp` implement the current corpus baseline for `decmpfs_uncompressed_attribute`; `tests/corpus/generate-sample-fixtures.ps1` regenerates compressed fixtures and `tests/unit/apfs_tests.cpp` verifies decode behavior and metadata reporting.
 
-- [ ] `M1-T08` Volume policy engine
-  Status: `Planned`
+- [x] `M1-T08` Volume policy engine
+  Status: `Done`
   Depends on: `M1-T03`
   Done when: Core classifies each volume into `Hide`, `MountReadOnly`, `MountReadWrite`, or `Reject` with reasons.
   Verification: Policy matrix tests.
+  Evidence: `src/apfs-core/src/policy.cpp` encodes the v1 precedence rules and `src/apfs-core/src/discovery.cpp` attaches policy decisions to discovered volumes; `tests/unit/apfs_tests.cpp` and new inspect integration tests validate writable, snapshot read-only, and sealed reject outcomes.
 
-- [ ] `M1-T09` `orchard-inspect` real output
-  Status: `Planned`
+- [x] `M1-T09` `orchard-inspect` real output
+  Status: `Done`
   Depends on: `M1-T08`
   Done when: Inspect tool prints structured volume metadata, roles, features, and policy outcomes.
   Verification: Snapshot-based CLI tests.
+  Evidence: `src/apfs-core/src/inspection.cpp` now enriches discovered volumes with root-directory samples and file probes, and `tools/inspect/src/main.cpp` prints policy, root entries, probe reads, and volume notes; integration tests cover direct, GPT, snapshot, and sealed inspect output.
 
 ## M2 Read-Only Windows Mount
 
@@ -713,4 +723,5 @@ Start here once implementation begins:
 - [x] `NOW-08` Start `M1-T01` block I/O abstraction
 - [x] `NOW-09` Start `M1-T02` GPT and container discovery on top of `M1-T01`
 - [x] `NOW-10` Start `M1-T04` object map and B-tree traversal
-- [ ] `NOW-11` Start `M1-T05` inode, dentry, and path lookup
+- [x] `NOW-11` Start `M1-T05` inode, dentry, and path lookup
+- [ ] `NOW-12` Start `M2-T01` WinFsp read-only adapter skeleton on top of the offline reader core

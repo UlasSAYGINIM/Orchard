@@ -3,6 +3,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -13,6 +14,7 @@ namespace orchard::apfs {
 
 constexpr std::uint32_t kApfsMinimumBlockSize = 4096U;
 constexpr std::uint32_t kApfsMaximumBlockSize = 65536U;
+constexpr std::uint64_t kApfsRootDirectoryObjectId = 2U;
 
 constexpr std::uint32_t kObjectTypeMask = 0x0000FFFFU;
 constexpr std::uint32_t kObjectTypeNxSuperblock = 0x00000001U;
@@ -33,6 +35,23 @@ constexpr std::uint16_t kBtreeNodeFlagMask = 0x8007U;
 constexpr std::uint16_t kBtreeOffsetInvalid = 0xFFFFU;
 
 constexpr std::uint32_t kOmapValueDeleted = 0x00000001U;
+
+constexpr std::uint64_t kNxIncompatFusion = 0x100ULL;
+
+constexpr std::uint64_t kVolumeIncompatCaseInsensitive = 0x1ULL;
+constexpr std::uint64_t kVolumeIncompatDatalessSnaps = 0x2ULL;
+constexpr std::uint64_t kVolumeIncompatEncRolled = 0x4ULL;
+constexpr std::uint64_t kVolumeIncompatNormalizationInsensitive = 0x8ULL;
+constexpr std::uint64_t kVolumeIncompatIncompleteRestore = 0x10ULL;
+constexpr std::uint64_t kVolumeIncompatSealed = 0x20ULL;
+
+constexpr std::uint16_t kVolumeRoleSystem = 0x0001U;
+constexpr std::uint16_t kVolumeRoleUser = 0x0002U;
+constexpr std::uint16_t kVolumeRoleRecovery = 0x0004U;
+constexpr std::uint16_t kVolumeRoleVm = 0x0008U;
+constexpr std::uint16_t kVolumeRolePreboot = 0x0010U;
+constexpr std::uint16_t kVolumeRoleInstaller = 0x0020U;
+constexpr std::uint16_t kVolumeRoleData = 0x0040U;
 
 struct FeatureFlags {
   std::uint64_t compatible = 0;
@@ -67,18 +86,32 @@ struct ParsedVolumeSuperblock {
   FeatureFlags features;
   std::uint16_t role = 0;
   std::vector<std::string> role_names;
+  std::uint32_t root_tree_type = 0;
+  std::uint64_t omap_oid = 0;
+  std::uint64_t root_tree_oid = 0;
+  std::uint64_t extentref_tree_oid = 0;
+  std::uint64_t fext_tree_oid = 0;
+  std::uint64_t doc_id_tree_oid = 0;
+  std::uint64_t security_tree_oid = 0;
+  std::uint64_t root_directory_object_id = kApfsRootDirectoryObjectId;
   bool case_insensitive = false;
+  bool snapshots_present = false;
+  bool encryption_rolled = false;
+  bool incomplete_restore = false;
+  bool normalization_insensitive = false;
   bool sealed = false;
 };
 
 [[nodiscard]] blockio::Error MakeApfsError(blockio::ErrorCode code, std::string message);
 
-[[nodiscard]] bool HasRange(std::span<const std::uint8_t> bytes,
-                            std::size_t offset,
+[[nodiscard]] bool HasRange(std::span<const std::uint8_t> bytes, std::size_t offset,
                             std::size_t length) noexcept;
-[[nodiscard]] std::uint16_t ReadLe16(std::span<const std::uint8_t> bytes, std::size_t offset) noexcept;
-[[nodiscard]] std::uint32_t ReadLe32(std::span<const std::uint8_t> bytes, std::size_t offset) noexcept;
-[[nodiscard]] std::uint64_t ReadLe64(std::span<const std::uint8_t> bytes, std::size_t offset) noexcept;
+[[nodiscard]] std::uint16_t ReadLe16(std::span<const std::uint8_t> bytes,
+                                     std::size_t offset) noexcept;
+[[nodiscard]] std::uint32_t ReadLe32(std::span<const std::uint8_t> bytes,
+                                     std::size_t offset) noexcept;
+[[nodiscard]] std::uint64_t ReadLe64(std::span<const std::uint8_t> bytes,
+                                     std::size_t offset) noexcept;
 
 [[nodiscard]] std::string FormatRawUuid(std::span<const std::uint8_t> bytes);
 [[nodiscard]] std::string FormatGuidFromGptBytes(std::span<const std::uint8_t, 16> bytes);

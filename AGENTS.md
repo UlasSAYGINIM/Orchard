@@ -110,4 +110,14 @@ Regenerate synthetic sample fixtures:
   - object-header parsing, generic B-tree node parsing, container omap traversal, and omap-backed volume superblock resolution
 - `src/apfs-core` is now split so `discovery.cpp` orchestrates layout detection while low-level parsing lives in `format.cpp`, `object.cpp`, `btree.cpp`, and `omap.cpp`.
 - Synthetic APFS fixtures now include a real omap object plus root/leaf omap B-tree nodes; regenerate them with `tests/corpus/generate-sample-fixtures.ps1` after fixture-layout changes.
+- The synthetic fixture generator now uses an inline Python builder inside `tests/corpus/generate-sample-fixtures.ps1`; keep the Python and `tests/unit/apfs_tests.cpp` fixture layouts in sync when record layouts change.
+- The current synthetic filesystem corpus exercises:
+  - volume omap resolution
+  - filesystem-tree inode and directory records
+  - multi-extent file reads
+  - sparse-hole reads
+  - inline `decmpfs_uncompressed_attribute` reads
+  - policy outcomes for writable, snapshot read-only, and sealed reject cases
+- `orchard-inspect` now enriches each discovered volume with root-directory samples and up to two root-file probes. The current probes are intended for offline inspection and test observability, not for final UX design.
+- `orchard_lint` now runs across 18 translation units and can take several minutes locally; prefer running it separately from `ctest`.
 - When collecting verification evidence, do not run `cmake --build` and `ctest` in parallel. Running them concurrently can produce misleading failures against stale executables.

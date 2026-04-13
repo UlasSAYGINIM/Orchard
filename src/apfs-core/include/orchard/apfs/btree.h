@@ -60,26 +60,29 @@ class NodeView {
 public:
   using CompareFn = std::function<blockio::Result<int>(std::span<const std::uint8_t>)>;
 
-  NodeView(std::span<const std::uint8_t> bytes,
-           NodeHeader header,
-           std::size_t key_area_start,
-           std::size_t value_area_start,
-           std::size_t value_area_end,
-           std::optional<BtreeInfo> info,
-           std::uint32_t fixed_key_size,
-           std::uint32_t fixed_value_size);
+  NodeView(std::span<const std::uint8_t> bytes, NodeHeader header, std::size_t key_area_start,
+           std::size_t value_area_start, std::size_t value_area_end, std::optional<BtreeInfo> info,
+           std::uint32_t fixed_key_size, std::uint32_t fixed_value_size);
 
-  [[nodiscard]] const NodeHeader& header() const noexcept { return header_; }
+  [[nodiscard]] const NodeHeader& header() const noexcept {
+    return header_;
+  }
   [[nodiscard]] bool is_root() const noexcept;
   [[nodiscard]] bool is_leaf() const noexcept;
   [[nodiscard]] bool uses_fixed_kv() const noexcept;
-  [[nodiscard]] std::uint32_t fixed_key_size() const noexcept { return fixed_key_size_; }
-  [[nodiscard]] std::uint32_t fixed_value_size() const noexcept { return fixed_value_size_; }
-  [[nodiscard]] const std::optional<BtreeInfo>& btree_info() const noexcept { return info_; }
+  [[nodiscard]] std::uint32_t fixed_key_size() const noexcept {
+    return fixed_key_size_;
+  }
+  [[nodiscard]] std::uint32_t fixed_value_size() const noexcept {
+    return fixed_value_size_;
+  }
+  [[nodiscard]] const std::optional<BtreeInfo>& btree_info() const noexcept {
+    return info_;
+  }
 
   [[nodiscard]] blockio::Result<NodeRecordView> RecordAt(std::size_t index) const;
-  [[nodiscard]] blockio::Result<std::optional<std::size_t>> FindFloorIndex(
-      const CompareFn& compare) const;
+  [[nodiscard]] blockio::Result<std::optional<std::size_t>>
+  FindFloorIndex(const CompareFn& compare) const;
 
 private:
   std::span<const std::uint8_t> bytes_;
@@ -101,16 +104,14 @@ public:
 
   explicit BtreeWalker(const PhysicalObjectReader& reader);
 
-  [[nodiscard]] blockio::Result<std::optional<NodeRecordCopy>> Find(
-      std::uint64_t root_block_index,
-      const CompareFn& compare) const;
+  [[nodiscard]] blockio::Result<std::optional<NodeRecordCopy>> Find(std::uint64_t root_block_index,
+                                                                    const CompareFn& compare) const;
   [[nodiscard]] blockio::Result<std::size_t> VisitInOrder(std::uint64_t root_block_index,
                                                           const VisitFn& visitor) const;
 
 private:
-  [[nodiscard]] blockio::Result<std::size_t> VisitNodeInOrder(std::uint64_t block_index,
-                                                              const VisitFn& visitor,
-                                                              std::size_t visited) const;
+  [[nodiscard]] blockio::Result<std::size_t>
+  VisitNodeInOrder(std::uint64_t block_index, const VisitFn& visitor, std::size_t visited) const;
 
   const PhysicalObjectReader* reader_ = nullptr;
 };

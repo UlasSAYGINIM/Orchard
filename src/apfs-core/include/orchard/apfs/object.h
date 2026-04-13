@@ -24,20 +24,26 @@ struct ObjectBlock {
   ObjectHeader header;
   std::vector<std::uint8_t> bytes;
 
-  [[nodiscard]] std::span<const std::uint8_t> view() const noexcept { return bytes; }
+  [[nodiscard]] std::span<const std::uint8_t> view() const noexcept {
+    return bytes;
+  }
 };
 
 blockio::Result<ObjectHeader> ParseObjectHeader(std::span<const std::uint8_t> block);
 
 class PhysicalObjectReader {
 public:
-  PhysicalObjectReader(const blockio::Reader& reader,
-                       std::uint64_t container_byte_offset,
+  // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+  PhysicalObjectReader(const blockio::Reader& reader, std::uint64_t container_byte_offset,
                        std::uint32_t block_size);
 
   [[nodiscard]] blockio::Result<ObjectBlock> ReadPhysicalObject(std::uint64_t block_index) const;
-  [[nodiscard]] std::uint64_t container_byte_offset() const noexcept { return container_byte_offset_; }
-  [[nodiscard]] std::uint32_t block_size() const noexcept { return block_size_; }
+  [[nodiscard]] std::uint64_t container_byte_offset() const noexcept {
+    return container_byte_offset_;
+  }
+  [[nodiscard]] std::uint32_t block_size() const noexcept {
+    return block_size_;
+  }
 
 private:
   const blockio::Reader* reader_ = nullptr;

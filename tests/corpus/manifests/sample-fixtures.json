@@ -11,10 +11,10 @@
       "encryption": "none",
       "snapshots": "absent",
       "system_volume_group": "none",
-      "compression_algorithms": ["none"],
+      "compression_algorithms": ["none", "decmpfs_uncompressed_attribute"],
       "feature_flags": ["synthetic", "direct_container"],
       "expected_policy": "MountReadWrite",
-      "notes": "Synthetic APFS-like direct container used for M1 reader, checkpoint, and volume parsing tests."
+      "notes": "Synthetic APFS-like direct container used for M1 reader, path lookup, file read, compression, and policy tests."
     },
     {
       "id": "gpt-user-data",
@@ -26,7 +26,7 @@
       "encryption": "none",
       "snapshots": "absent",
       "system_volume_group": "none",
-      "compression_algorithms": ["none"],
+      "compression_algorithms": ["none", "decmpfs_uncompressed_attribute"],
       "feature_flags": ["synthetic", "gpt_partitioned"],
       "expected_policy": "MountReadWrite",
       "notes": "Synthetic GPT-wrapped APFS-like fixture used to validate partition discovery."
@@ -41,7 +41,7 @@
       "encryption": "none",
       "snapshots": "present",
       "system_volume_group": "none",
-      "compression_algorithms": ["none"],
+      "compression_algorithms": ["none", "decmpfs_uncompressed_attribute"],
       "feature_flags": ["synthetic", "dataless_snapshots"],
       "expected_policy": "MountReadOnly",
       "notes": "Synthetic APFS-like volume with snapshot-related incompatible flags for policy work."
@@ -56,7 +56,7 @@
       "encryption": "none",
       "snapshots": "present",
       "system_volume_group": "paired",
-      "compression_algorithms": ["none"],
+      "compression_algorithms": ["none", "decmpfs_uncompressed_attribute"],
       "feature_flags": ["synthetic", "sealed"],
       "expected_policy": "Reject",
       "notes": "Synthetic APFS-like system volume with sealed metadata for future policy checks."

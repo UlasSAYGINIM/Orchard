@@ -58,7 +58,7 @@ blockio::Result<OmapValue> ParseOmapValue(const std::span<const std::uint8_t> by
 }
 
 OmapResolver::OmapResolver(const PhysicalObjectReader& reader, OmapSuperblock superblock)
-    : superblock_(std::move(superblock)), walker_(reader) {}
+    : superblock_(superblock), walker_(reader) {}
 
 blockio::Result<OmapResolver> OmapResolver::Load(const PhysicalObjectReader& reader,
                                                  const std::uint64_t omap_block_index) {
@@ -77,8 +77,8 @@ blockio::Result<OmapResolver> OmapResolver::Load(const PhysicalObjectReader& rea
 
 blockio::Result<OmapRecord> OmapResolver::Lookup(const std::uint64_t oid,
                                                  const std::uint64_t xid_limit) const {
-  auto compare = [oid, xid_limit](const std::span<const std::uint8_t> key_bytes)
-      -> blockio::Result<int> {
+  auto compare =
+      [oid, xid_limit](const std::span<const std::uint8_t> key_bytes) -> blockio::Result<int> {
     auto key_result = ParseOmapKey(key_bytes);
     if (!key_result.ok()) {
       return key_result.error();
@@ -97,14 +97,14 @@ blockio::Result<OmapRecord> OmapResolver::Lookup(const std::uint64_t oid,
   if (!record_result.ok()) {
     return record_result.error();
   }
-  if (!record_result.value().has_value()) {
+  const auto& record = record_result.value();
+  if (!record.has_value()) {
     return MakeApfsError(blockio::ErrorCode::kNotFound,
                          "APFS omap did not contain a mapping at or below the requested xid.");
   }
 
   auto key_result =
-      ParseOmapKey(std::span<const std::uint8_t>(record_result.value()->key.data(),
-                                                 record_result.value()->key.size()));
+      ParseOmapKey(std::span<const std::uint8_t>(record->key.data(), record->key.size()));
   if (!key_result.ok()) {
     return key_result.error();
   }
@@ -114,8 +114,7 @@ blockio::Result<OmapRecord> OmapResolver::Lookup(const std::uint64_t oid,
   }
 
   auto value_result =
-      ParseOmapValue(std::span<const std::uint8_t>(record_result.value()->value.data(),
-                                                   record_result.value()->value.size()));
+      ParseOmapValue(std::span<const std::uint8_t>(record->value.data(), record->value.size()));
   if (!value_result.ok()) {
     return value_result.error();
   }
@@ -131,8 +130,8 @@ blockio::Result<OmapRecord> OmapResolver::Lookup(const std::uint64_t oid,
   };
 }
 
-blockio::Result<std::uint64_t> OmapResolver::ResolveOidToBlock(const std::uint64_t oid,
-                                                               const std::uint64_t xid_limit) const {
+blockio::Result<std::uint64_t>
+OmapResolver::ResolveOidToBlock(const std::uint64_t oid, const std::uint64_t xid_limit) const {
   auto lookup_result = Lookup(oid, xid_limit);
   if (!lookup_result.ok()) {
     return lookup_result.error();

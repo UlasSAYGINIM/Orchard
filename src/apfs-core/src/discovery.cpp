@@ -7,6 +7,7 @@
 
 #include "orchard/apfs/object.h"
 #include "orchard/apfs/omap.h"
+#include "orchard/apfs/policy.h"
 #include "orchard/apfs/probe.h"
 
 namespace orchard::apfs {
@@ -52,15 +53,47 @@ struct CandidateContainer {
 [[nodiscard]] VolumeInfo MakeVolumeInfo(const ParsedVolumeSuperblock& parsed) {
   return VolumeInfo{
       .object_id = parsed.object_id,
+      .xid = parsed.xid,
       .filesystem_index = parsed.filesystem_index,
       .name = parsed.name,
       .uuid = parsed.uuid,
       .features = parsed.features,
       .role = parsed.role,
       .role_names = parsed.role_names,
+      .root_tree_type = parsed.root_tree_type,
+      .omap_oid = parsed.omap_oid,
+      .root_tree_oid = parsed.root_tree_oid,
+      .extentref_tree_oid = parsed.extentref_tree_oid,
+      .fext_tree_oid = parsed.fext_tree_oid,
+      .doc_id_tree_oid = parsed.doc_id_tree_oid,
+      .security_tree_oid = parsed.security_tree_oid,
+      .root_directory_object_id = parsed.root_directory_object_id,
       .case_insensitive = parsed.case_insensitive,
+      .snapshots_present = parsed.snapshots_present,
+      .encryption_rolled = parsed.encryption_rolled,
+      .incomplete_restore = parsed.incomplete_restore,
+      .normalization_insensitive = parsed.normalization_insensitive,
       .sealed = parsed.sealed,
+      .policy = {},
+      .root_entries = {},
+      .root_file_probes = {},
+      .notes = {},
   };
+}
+
+[[nodiscard]] PolicyDecision MakePolicyDecision(const ContainerInfo& container,
+                                                const VolumeInfo& volume) {
+  return EvaluatePolicy(PolicyInput{
+      .role = volume.role,
+      .container_fusion = (container.features.incompatible & kNxIncompatFusion) != 0U,
+      .case_insensitive = volume.case_insensitive,
+      .sealed = volume.sealed,
+      .snapshots_present = volume.snapshots_present,
+      .encryption_rolled = volume.encryption_rolled,
+      .incomplete_restore = volume.incomplete_restore,
+      .normalization_insensitive = volume.normalization_insensitive,
+      .volume_incompatible_features = volume.features.incompatible,
+  });
 }
 
 blockio::Result<std::vector<VolumeInfo>>
@@ -306,6 +339,9 @@ TryReadContainerAt(const blockio::Reader& reader, const std::uint64_t byte_offse
   }
 
   container.volumes = std::move(volumes_result.value());
+  for (auto& volume : container.volumes) {
+    volume.policy = MakePolicyDecision(container, volume);
+  }
   container.volumes_resolved_via_omap = true;
   container.notes.push_back(
       "Resolved referenced volume superblocks through the container object map.");

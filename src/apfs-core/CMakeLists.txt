@@ -2,12 +2,19 @@ add_library(
   orchard_apfs_core
   STATIC
     src/btree.cpp
+    src/compression.cpp
     src/discovery.cpp
+    src/file_read.cpp
+    src/fs_keys.cpp
+    src/fs_records.cpp
     src/format.cpp
     src/inspection.cpp
     src/object.cpp
     src/omap.cpp
+    src/path_lookup.cpp
+    src/policy.cpp
     src/probe.cpp
+    src/volume.cpp
 )
 
 target_include_directories(

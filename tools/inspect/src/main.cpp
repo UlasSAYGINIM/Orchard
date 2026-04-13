@@ -85,6 +85,27 @@ void PrintQuotedStringArray(const std::vector<std::string>& values, const std::s
   std::cout << "]";
 }
 
+void PrintPolicyReasonArray(const std::vector<orchard::apfs::PolicyReason>& values,
+                            const std::string_view indent) {
+  std::cout << "[";
+  if (!values.empty()) {
+    std::cout << "\n";
+  }
+
+  for (std::size_t index = 0; index < values.size(); ++index) {
+    std::cout << indent << "\"" << orchard::apfs::ToString(values[index]) << "\"";
+    if (index + 1U != values.size()) {
+      std::cout << ",";
+    }
+    std::cout << "\n";
+  }
+
+  if (!values.empty()) {
+    std::cout << std::string(indent.substr(0, indent.size() - 2U));
+  }
+  std::cout << "]";
+}
+
 void PrintErrorObject(const std::optional<orchard::blockio::Error>& error,
                       const std::string_view indent) {
   if (!error.has_value()) {
@@ -96,6 +117,16 @@ void PrintErrorObject(const std::optional<orchard::blockio::Error>& error,
   std::cout << indent << "\"code\": \"" << orchard::blockio::ToString(error->code) << "\",\n";
   std::cout << indent << "\"message\": \"" << EscapeJson(error->message) << "\",\n";
   std::cout << indent << "\"system_code\": " << error->system_code << "\n";
+  std::cout << std::string(indent.substr(0, indent.size() - 2U)) << "}";
+}
+
+void PrintPolicyObject(const orchard::apfs::PolicyDecision& policy, const std::string_view indent) {
+  std::cout << "{\n";
+  std::cout << indent << "\"action\": \"" << orchard::apfs::ToString(policy.action) << "\",\n";
+  std::cout << indent << "\"reasons\": ";
+  PrintPolicyReasonArray(policy.reasons, std::string(indent) + "  ");
+  std::cout << ",\n";
+  std::cout << indent << "\"summary\": \"" << EscapeJson(policy.summary) << "\"\n";
   std::cout << std::string(indent.substr(0, indent.size() - 2U)) << "}";
 }
 
@@ -155,9 +186,68 @@ void PrintPartitions(const std::vector<orchard::apfs::PartitionInfo>& partitions
   std::cout << "]";
 }
 
+void PrintDirectoryEntrySamples(const std::vector<orchard::apfs::DirectoryEntrySample>& entries,
+                                const std::string_view indent) {
+  std::cout << "[";
+  if (!entries.empty()) {
+    std::cout << "\n";
+  }
+
+  for (std::size_t index = 0; index < entries.size(); ++index) {
+    std::cout << indent << "{\n";
+    std::cout << indent << "  \"name\": \"" << EscapeJson(entries[index].name) << "\",\n";
+    std::cout << indent << "  \"inode_id\": " << entries[index].inode_id << ",\n";
+    std::cout << indent << "  \"kind\": \"" << EscapeJson(entries[index].kind) << "\"\n";
+    std::cout << indent << "}";
+    if (index + 1U != entries.size()) {
+      std::cout << ",";
+    }
+    std::cout << "\n";
+  }
+
+  if (!entries.empty()) {
+    std::cout << std::string(indent.substr(0, indent.size() - 2U));
+  }
+  std::cout << "]";
+}
+
+void PrintFileProbes(const std::vector<orchard::apfs::FileProbeInfo>& probes,
+                     const std::string_view indent) {
+  std::cout << "[";
+  if (!probes.empty()) {
+    std::cout << "\n";
+  }
+
+  for (std::size_t index = 0; index < probes.size(); ++index) {
+    std::cout << indent << "{\n";
+    std::cout << indent << "  \"path\": \"" << EscapeJson(probes[index].path) << "\",\n";
+    std::cout << indent << "  \"inode_id\": " << probes[index].inode_id << ",\n";
+    std::cout << indent << "  \"size_bytes\": " << probes[index].size_bytes << ",\n";
+    std::cout << indent << "  \"kind\": \"" << EscapeJson(probes[index].kind) << "\",\n";
+    std::cout << indent << "  \"compression\": \"" << EscapeJson(probes[index].compression)
+              << "\",\n";
+    std::cout << indent << "  \"sparse\": " << (probes[index].sparse ? "true" : "false") << ",\n";
+    std::cout << indent << "  \"preview_utf8\": \"" << EscapeJson(probes[index].preview_utf8)
+              << "\",\n";
+    std::cout << indent << "  \"preview_hex\": \"" << EscapeJson(probes[index].preview_hex)
+              << "\"\n";
+    std::cout << indent << "}";
+    if (index + 1U != probes.size()) {
+      std::cout << ",";
+    }
+    std::cout << "\n";
+  }
+
+  if (!probes.empty()) {
+    std::cout << std::string(indent.substr(0, indent.size() - 2U));
+  }
+  std::cout << "]";
+}
+
 void PrintVolumeObject(const orchard::apfs::VolumeInfo& volume, const std::string_view indent) {
   std::cout << "{\n";
   std::cout << indent << "\"object_id\": " << volume.object_id << ",\n";
+  std::cout << indent << "\"xid\": " << volume.xid << ",\n";
   std::cout << indent << "\"filesystem_index\": " << volume.filesystem_index << ",\n";
   std::cout << indent << "\"name\": \"" << EscapeJson(volume.name) << "\",\n";
   std::cout << indent << "\"uuid\": \"" << EscapeJson(volume.uuid) << "\",\n";
@@ -165,11 +255,37 @@ void PrintVolumeObject(const orchard::apfs::VolumeInfo& volume, const std::strin
   std::cout << indent << "\"role_names\": ";
   PrintQuotedStringArray(volume.role_names, std::string(indent) + "  ");
   std::cout << ",\n";
+  std::cout << indent << "\"root_tree_type\": \"" << ToHexString(volume.root_tree_type) << "\",\n";
+  std::cout << indent << "\"omap_oid\": " << volume.omap_oid << ",\n";
+  std::cout << indent << "\"root_tree_oid\": " << volume.root_tree_oid << ",\n";
+  std::cout << indent << "\"root_directory_object_id\": " << volume.root_directory_object_id
+            << ",\n";
   std::cout << indent << "\"case_insensitive\": " << (volume.case_insensitive ? "true" : "false")
             << ",\n";
+  std::cout << indent << "\"snapshots_present\": " << (volume.snapshots_present ? "true" : "false")
+            << ",\n";
+  std::cout << indent << "\"encryption_rolled\": " << (volume.encryption_rolled ? "true" : "false")
+            << ",\n";
+  std::cout << indent
+            << "\"incomplete_restore\": " << (volume.incomplete_restore ? "true" : "false")
+            << ",\n";
+  std::cout << indent << "\"normalization_insensitive\": "
+            << (volume.normalization_insensitive ? "true" : "false") << ",\n";
   std::cout << indent << "\"sealed\": " << (volume.sealed ? "true" : "false") << ",\n";
   std::cout << indent << "\"features\": ";
   PrintFeatureFlags(volume.features, std::string(indent) + "  ");
+  std::cout << ",\n";
+  std::cout << indent << "\"policy\": ";
+  PrintPolicyObject(volume.policy, std::string(indent) + "  ");
+  std::cout << ",\n";
+  std::cout << indent << "\"root_entries\": ";
+  PrintDirectoryEntrySamples(volume.root_entries, std::string(indent) + "  ");
+  std::cout << ",\n";
+  std::cout << indent << "\"root_file_probes\": ";
+  PrintFileProbes(volume.root_file_probes, std::string(indent) + "  ");
+  std::cout << ",\n";
+  std::cout << indent << "\"notes\": ";
+  PrintQuotedStringArray(volume.notes, std::string(indent) + "  ");
   std::cout << "\n";
   std::cout << std::string(indent.substr(0, indent.size() - 2U)) << "}";
 }
