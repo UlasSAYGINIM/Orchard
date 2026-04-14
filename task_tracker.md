@@ -456,13 +456,27 @@ A task is only `Done` when all apply:
 - Supported volumes auto-mount.
 - Users can inspect status and unmount from UI or CLI.
 
+### Review Snapshot
+
+- Review date: `2026-04-13`
+- Locally completed: `M3-T01`
+- Latest local verification:
+  - `cmake --build --preset default --parallel`
+  - `cmake --build --preset default --target orchard_format_check`
+  - `cmake --build --preset default --target orchard_lint`
+  - `ctest --preset default --output-on-failure`
+  - `tools/dev/orchard-service-console-smoke.ps1`
+  - `tools/dev/orchard-service-smoke.ps1` from an elevated shell
+  - Result: `12/12 tests passed`, `clang-format check passed`, `clang-tidy passed`, the console-host smoke mounted `plain-user-data.img`, validated `alpha.txt` plus the nested note, and exited cleanly, and the elevated SCM smoke installed a temporary service, observed `Running`, stopped it, and uninstalled it cleanly with final status `stopped_after_smoke`
+
 ### Tasks
 
-- [ ] `M3-T01` Windows service host
-  Status: `Planned`
+- [x] `M3-T01` Windows service host
+  Status: `Done`
   Depends on: `M2-T05`
   Done when: Background service starts on boot and manages mount lifecycle.
   Verification: Service install and startup tests.
+  Evidence: `src/mount-service/` is now a real service-host implementation rather than a placeholder, split across `service_host`, `runtime`, `mount_registry`, `service_state`, and `types`; `src/mount-service/src/main.cpp` now builds `orchard-service-host.exe` with `--console`, `--install`, and `--uninstall` entry points; `tests/unit/mount_service_tests.cpp` covers service-state transitions, duplicate mount rejection, runtime stop idempotence, and console command-line parsing; `tools/dev/orchard-service-console-smoke.ps1` validates the console-host runtime by mounting `tests/corpus/samples/plain-user-data.img`, reading the mounted contents, and requesting graceful shutdown through a named event; `src/CMakeLists.txt` now configures `fs-winfsp` before `mount-service`, and `src/mount-service/CMakeLists.txt` now copies `winfsp-x64.dll` beside `orchard-service-host.exe`, fixing the local loader failure shown by `winfsp-x64.dll was not found`; `tools/dev/orchard-service-smoke.ps1` now uses `System.Diagnostics.Stopwatch` for portable timeout handling; local verification passed with `cmake --build --preset default --parallel`, `cmake --build --preset default --target orchard_format_check`, `cmake --build --preset default --target orchard_lint`, `ctest --preset default --output-on-failure`, `tools/dev/orchard-service-console-smoke.ps1`, and an elevated `tools/dev/orchard-service-smoke.ps1` run that installed `OrchardSmoke-5d834718`, observed `Running`, stopped the service, and returned final status `stopped_after_smoke`.
 
 - [ ] `M3-T02` Device arrival and removal detection
   Status: `Planned`
@@ -760,4 +774,5 @@ Start here once implementation begins:
 - [x] `NOW-14` Finish `M2-T03` by recording manual Explorer browse/open/copy-out validation on top of the new shell-stress coverage
 - [x] `NOW-15` Start `M2-T04` symlink and hard-link read behavior on top of the hardened read-only mount path
 - [x] `NOW-16` Start `M2-T05` read-only mount stress baseline on top of the completed link-aware read path
-- [ ] `NOW-17` Start `M3-T01` Windows service host now that the read-only WinFsp path has a verified soak baseline
+- [x] `NOW-17` Finish `M3-T01` by running the SCM-backed service smoke from an elevated shell and recording the result
+- [ ] `NOW-18` Start `M3-T02` device arrival and removal detection on top of the completed service host

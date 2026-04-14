@@ -234,3 +234,37 @@ $env:WINFSP_ROOT_DIR = "$env:TEMP\winfsp-sdk\DYNAMIC"
   - max handle counts of `148`, `148`, and `147` respectively
   - max private bytes of `3100672`, `2854912`, and `2809856` respectively
   - no stale drive letters after unmount, no timeout-triggered hangs, and no copy-out/hash mismatches during the soak run
+
+## M3 notes
+
+- `src/mount-service` is no longer a placeholder. The current `M3-T01` service-host foundation is split across:
+  - `service_host.*` for SCM and console-mode entry points
+  - `runtime.*` for the owned worker/stop lifecycle
+  - `mount_registry.*` for active mounted-session ownership
+  - `service_state.*` for service-state transitions
+  - `types.*` for mount/service request records
+- `src/CMakeLists.txt` must keep `add_subdirectory(fs-winfsp)` before `add_subdirectory(mount-service)`. `mount-service` depends on WinFsp target availability during configure time for its runtime-DLL deployment rule.
+- `src/mount-service/CMakeLists.txt` now adds an explicit post-build copy of `$<TARGET_FILE:WinFsp::WinFsp>` for `orchard-service-host.exe`. `TARGET_RUNTIME_DLLS` alone was not sufficient through the static link chain.
+- The local loader failure `winfsp-x64.dll was not found` for `orchard-service-host.exe` is fixed by the two points above. After a rebuild, `build/default/src/mount-service` should contain:
+  - `orchard-service-host.exe`
+  - `winfsp-x64.dll`
+- Local console-host smoke verification now passes with:
+
+```powershell
+$env:PATH = "C:\Users\luism\AppData\Roaming\Python\Python311\Scripts;C:\Users\luism\miniconda3\Library\bin;C:\Users\luism\miniconda3\Library\x86_64-w64-mingw32\bin;$env:PATH"
+$env:WINFSP_ROOT_DIR = "$env:TEMP\winfsp-sdk\DYNAMIC"
+.\tools\dev\orchard-service-console-smoke.ps1
+```
+
+- That smoke run mounted `plain-user-data.img`, validated `alpha.txt` and the nested note, then shut the console host down through its named event and observed clean mount disappearance.
+- The SCM-backed smoke script is:
+
+```powershell
+$env:PATH = "C:\Users\luism\AppData\Roaming\Python\Python311\Scripts;C:\Users\luism\miniconda3\Library\bin;C:\Users\luism\miniconda3\Library\x86_64-w64-mingw32\bin;$env:PATH"
+$env:WINFSP_ROOT_DIR = "$env:TEMP\winfsp-sdk\DYNAMIC"
+.\tools\dev\orchard-service-smoke.ps1
+```
+
+- On this machine, `orchard-service-smoke.ps1` currently requires an elevated PowerShell session. A non-elevated run failed while opening the Windows Service Control Manager for install.
+- `tools/dev/orchard-service-smoke.ps1` should use `System.Diagnostics.Stopwatch` for timeouts, not `[Environment]::TickCount64`. The latter was not available in the Windows PowerShell/.NET combination used during local `M3-T01` validation.
+- Elevated local `M3-T01` SCM smoke now passes. The successful run installed a temporary service named `OrchardSmoke-5d834718`, observed the service reach `Running`, stopped it, and returned JSON with final status `stopped_after_smoke` before uninstalling it.

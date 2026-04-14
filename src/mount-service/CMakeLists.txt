@@ -1,7 +1,16 @@
 add_library(
   orchard_mount_service
   STATIC
-    src/mount_service_placeholder.cpp
+    include/orchard/mount_service/mount_registry.h
+    include/orchard/mount_service/runtime.h
+    include/orchard/mount_service/service_host.h
+    include/orchard/mount_service/service_state.h
+    include/orchard/mount_service/types.h
+    src/mount_registry.cpp
+    src/runtime.cpp
+    src/service_host.cpp
+    src/service_state.cpp
+    src/types.cpp
 )
 
 target_include_directories(
@@ -10,5 +19,42 @@ target_include_directories(
     "${CMAKE_CURRENT_SOURCE_DIR}/include"
 )
 
+target_link_libraries(
+  orchard_mount_service
+  PUBLIC
+    orchard_fs_winfsp
+  PRIVATE
+    advapi32
+)
+
 orchard_configure_target(orchard_mount_service)
 
+add_executable(
+  orchard_service_host
+  src/main.cpp
+)
+
+target_link_libraries(
+  orchard_service_host
+  PRIVATE
+    orchard_mount_service
+)
+
+set_target_properties(
+  orchard_service_host
+  PROPERTIES
+    OUTPUT_NAME "orchard-service-host"
+)
+
+orchard_configure_target(orchard_service_host)
+
+if(TARGET WinFsp::WinFsp)
+  orchard_copy_runtime_dlls(orchard_service_host)
+  add_custom_command(
+    TARGET orchard_service_host
+    POST_BUILD
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+      "$<TARGET_FILE:WinFsp::WinFsp>"
+      "$<TARGET_FILE_DIR:orchard_service_host>"
+  )
+endif()

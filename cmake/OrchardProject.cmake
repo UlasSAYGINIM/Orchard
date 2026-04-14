@@ -32,6 +32,20 @@ function(orchard_copy_runtime_dlls target_name)
   )
 endfunction()
 
+function(orchard_copy_runtime_file target_name runtime_path)
+  if(NOT runtime_path)
+    return()
+  endif()
+
+  add_custom_command(
+    TARGET "${target_name}"
+    POST_BUILD
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+      "${runtime_path}"
+      $<TARGET_FILE_DIR:${target_name}>
+  )
+endfunction()
+
 function(orchard_add_maintenance_targets)
   find_program(ORCHARD_POWERSHELL NAMES pwsh powershell REQUIRED)
 

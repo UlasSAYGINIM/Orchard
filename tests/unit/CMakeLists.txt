@@ -23,6 +23,14 @@ orchard_add_cpp_test(
     orchard_fs_winfsp
 )
 
+orchard_add_cpp_test(
+  orchard_unit_mount_service
+  SOURCES
+    mount_service_tests.cpp
+  LIBRARIES
+    orchard_mount_service
+)
+
 target_compile_definitions(
   orchard_unit_apfs
   PRIVATE
@@ -31,4 +39,5 @@ target_compile_definitions(
 
 if(TARGET WinFsp::WinFsp)
   orchard_copy_runtime_dlls(orchard_unit_apfs)
+  orchard_copy_runtime_dlls(orchard_unit_mount_service)
 endif()
