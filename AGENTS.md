@@ -120,7 +120,7 @@ Regenerate synthetic sample fixtures:
   - inline `decmpfs_uncompressed_attribute` reads
   - policy outcomes for writable, snapshot read-only, and sealed reject cases
 - `orchard-inspect` now enriches each discovered volume with root-directory samples and up to two root-file probes. The current probes are intended for offline inspection and test observability, not for final UX design.
-- `orchard_lint` now runs across 30 translation units and can take several minutes locally; prefer running it separately from `ctest`.
+- `orchard_lint` now runs across 43 translation units and can take a long time locally; prefer running it separately from `ctest`.
 - When collecting verification evidence, do not run `cmake --build` and `ctest` in parallel. Running them concurrently can produce misleading failures against stale executables.
 
 ## M2 notes
@@ -268,3 +268,13 @@ $env:WINFSP_ROOT_DIR = "$env:TEMP\winfsp-sdk\DYNAMIC"
 - On this machine, `orchard-service-smoke.ps1` currently requires an elevated PowerShell session. A non-elevated run failed while opening the Windows Service Control Manager for install.
 - `tools/dev/orchard-service-smoke.ps1` should use `System.Diagnostics.Stopwatch` for timeouts, not `[Environment]::TickCount64`. The latter was not available in the Windows PowerShell/.NET combination used during local `M3-T01` validation.
 - Elevated local `M3-T01` SCM smoke now passes. The successful run installed a temporary service named `OrchardSmoke-5d834718`, observed the service reach `Running`, stopped it, and returned JSON with final status `stopped_after_smoke` before uninstalling it.
+- `M3-T02` now adds a device-discovery layer under `src/mount-service`:
+  - `device_monitor.*` registers ConfigMgr notifications through `CM_Register_Notification`
+  - `device_enumerator.*` enumerates `GUID_DEVINTERFACE_DISK` interfaces and resolves them to `\\.\PhysicalDriveN` paths with `IOCTL_STORAGE_GET_DEVICE_NUMBER`
+  - `device_inventory.*` keeps the normalized discovered-device and mounted-volume view
+  - `rescan_coordinator.*` coalesces burst notifications and posts reconciles onto the service runtime worker queue
+  - `device_discovery.*` ties monitor, enumerator, prober, and mount callbacks together
+- Keep the notification callback path non-blocking. `DeviceMonitor` only emits hint events; the real enumerate/probe/mount/unmount work must stay on the runtime queue through `RescanCoordinator`.
+- `DeviceDiscoveryManager` currently treats ConfigMgr events as hints, not truth. It always re-enumerates present devices, diffs against `DeviceInventory`, and only then mounts or unmounts.
+- Mounted-device remove/query-remove notifications are tracked separately from global disk-interface notifications. Suppressed-remount state is intentionally kept until `kMountedDeviceQueryRemoveFailed` clears it, so Orchard does not immediately remount a device during the same removal flow.
+- The current `M3-T02` verification is fake-driven through `orchard_unit_mount_service`; it covers startup enumeration, removal unmount, burst-event coalescing, and query-remove suppression. Real hardware plug/unplug smoke is still pending and should be recorded before closing `M3-T02`.

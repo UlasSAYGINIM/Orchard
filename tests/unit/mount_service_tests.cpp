@@ -1,8 +1,13 @@
+#include <algorithm>
+#include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include "orchard/mount_service/device_discovery.h"
+#include "orchard/mount_service/device_inventory.h"
 #include "orchard/mount_service/mount_registry.h"
 #include "orchard/mount_service/runtime.h"
 #include "orchard/mount_service/service_host.h"
@@ -14,6 +19,181 @@ namespace {
 struct FakeFactoryState {
   std::vector<orchard::fs_winfsp::MountConfig> seen_configs;
   std::vector<std::shared_ptr<int>> stop_counters;
+};
+
+struct FakePosterState {
+  std::vector<std::function<void()>> tasks;
+
+  bool Post(std::function<void()> task) {
+    tasks.push_back(std::move(task));
+    return true;
+  }
+
+  void RunAll() {
+    while (!tasks.empty()) {
+      auto task = std::move(tasks.front());
+      tasks.erase(tasks.begin());
+      task();
+    }
+  }
+};
+
+class FakeDeviceMonitor final : public orchard::mount_service::DeviceMonitor {
+public:
+  [[nodiscard]] orchard::blockio::Result<std::monostate>
+  Start(orchard::mount_service::DeviceMonitorCallback callback) override {
+    callback_ = std::move(callback);
+    started_ = true;
+    return std::monostate{};
+  }
+
+  void Stop() noexcept override {
+    started_ = false;
+    callback_ = {};
+    tracked_paths_.clear();
+  }
+
+  [[nodiscard]] orchard::blockio::Result<std::monostate>
+  TrackMountedDevice(std::wstring_view device_path) override {
+    tracked_paths_.emplace_back(device_path);
+    return std::monostate{};
+  }
+
+  void UntrackMountedDevice(std::wstring_view device_path) noexcept override {
+    tracked_paths_.erase(
+        std::remove_if(tracked_paths_.begin(), tracked_paths_.end(),
+                       [device_path](const std::wstring& current) {
+                         return orchard::mount_service::NormalizeDevicePathKey(current) ==
+                                orchard::mount_service::NormalizeDevicePathKey(device_path);
+                       }),
+        tracked_paths_.end());
+  }
+
+  void Emit(const orchard::mount_service::DeviceMonitorEvent& event) const {
+    if (callback_) {
+      callback_(event);
+    }
+  }
+
+  [[nodiscard]] bool IsTracked(std::wstring_view device_path) const {
+    return std::find_if(tracked_paths_.begin(), tracked_paths_.end(),
+                        [device_path](const std::wstring& current) {
+                          return orchard::mount_service::NormalizeDevicePathKey(current) ==
+                                 orchard::mount_service::NormalizeDevicePathKey(device_path);
+                        }) != tracked_paths_.end();
+  }
+
+private:
+  orchard::mount_service::DeviceMonitorCallback callback_;
+  std::vector<std::wstring> tracked_paths_;
+  bool started_ = false;
+};
+
+class FakeDeviceEnumerator final : public orchard::mount_service::DeviceEnumerator {
+public:
+  explicit FakeDeviceEnumerator(std::vector<orchard::mount_service::DeviceInterfaceInfo> devices)
+      : devices_(std::move(devices)) {}
+
+  [[nodiscard]] orchard::blockio::Result<std::vector<orchard::mount_service::DeviceInterfaceInfo>>
+  EnumeratePresentDiskInterfaces() override {
+    return devices_;
+  }
+
+  void set_devices(std::vector<orchard::mount_service::DeviceInterfaceInfo> devices) {
+    devices_ = std::move(devices);
+  }
+
+private:
+  std::vector<orchard::mount_service::DeviceInterfaceInfo> devices_;
+};
+
+class FakeDeviceProber final : public orchard::mount_service::DeviceProber {
+public:
+  struct ProbeEntry {
+    orchard::mount_service::KnownDeviceRecord record;
+    std::optional<orchard::blockio::Error> error;
+  };
+
+  void SetResult(std::wstring device_path, ProbeEntry entry) {
+    results_.push_back(std::pair(std::move(device_path), std::move(entry)));
+  }
+
+  [[nodiscard]] orchard::blockio::Result<orchard::mount_service::KnownDeviceRecord>
+  Probe(const orchard::mount_service::DeviceInterfaceInfo& device) override {
+    const auto found = std::find_if(results_.begin(), results_.end(), [&](const auto& current) {
+      return orchard::mount_service::NormalizeDevicePathKey(current.first) ==
+             orchard::mount_service::NormalizeDevicePathKey(device.device_path);
+    });
+    if (found == results_.end()) {
+      return orchard::mount_service::KnownDeviceRecord{
+          .device_path = device.device_path,
+          .target_info = {},
+          .volumes = {},
+          .probe_error = std::nullopt,
+      };
+    }
+    if (found->second.error.has_value()) {
+      return *found->second.error;
+    }
+    return found->second.record;
+  }
+
+private:
+  std::vector<std::pair<std::wstring, ProbeEntry>> results_;
+};
+
+class FakeMountPointAllocator final : public orchard::mount_service::MountPointAllocator {
+public:
+  void PushMountPoint(std::wstring mount_point) {
+    mount_points_.push_back(std::move(mount_point));
+  }
+
+  [[nodiscard]] orchard::blockio::Result<std::wstring>
+  Allocate(std::wstring_view device_path, const orchard::mount_service::KnownVolumeRecord& volume,
+           const std::vector<std::wstring>& active_mount_points) override {
+    (void)device_path;
+    (void)volume;
+    (void)active_mount_points;
+
+    if (mount_points_.empty()) {
+      return orchard::mount_service::MakeMountServiceError(
+          orchard::blockio::ErrorCode::kOpenFailed,
+          "The fake mount-point allocator has no more mount points.");
+    }
+
+    auto mount_point = std::move(mount_points_.front());
+    mount_points_.erase(mount_points_.begin());
+    return mount_point;
+  }
+
+private:
+  std::vector<std::wstring> mount_points_;
+};
+
+struct FakeMountOps {
+  std::vector<orchard::mount_service::MountRequest> mount_requests;
+  std::vector<std::wstring> unmount_ids;
+  int next_mount_ordinal = 1;
+
+  [[nodiscard]] orchard::blockio::Result<orchard::mount_service::MountedSessionRecord>
+  Mount(const orchard::mount_service::MountRequest& request) {
+    mount_requests.push_back(request);
+    return orchard::mount_service::MountedSessionRecord{
+        .mount_id = L"auto-" + std::to_wstring(next_mount_ordinal++),
+        .target_path = request.config.target_path,
+        .mount_point = request.config.mount_point,
+        .volume_object_id = request.config.selector.object_id.value_or(0),
+        .volume_name = request.config.selector.name.value_or("AutoMountedVolume"),
+        .volume_label = L"AutoMountedVolume",
+        .read_only = request.config.require_read_only_mount,
+    };
+  }
+
+  [[nodiscard]] orchard::blockio::Result<std::monostate>
+  Unmount(const orchard::mount_service::UnmountRequest& request) {
+    unmount_ids.push_back(request.mount_id);
+    return std::monostate{};
+  }
 };
 
 class FakeManagedMountSession final : public orchard::mount_service::ManagedMountSession {
@@ -52,7 +232,8 @@ private:
 
 class FakeMountSessionFactory final : public orchard::mount_service::MountSessionFactory {
 public:
-  explicit FakeMountSessionFactory(std::shared_ptr<FakeFactoryState> state) : state_(std::move(state)) {}
+  explicit FakeMountSessionFactory(std::shared_ptr<FakeFactoryState> state)
+      : state_(std::move(state)) {}
 
   [[nodiscard]] orchard::blockio::Result<orchard::mount_service::ManagedMountSessionHandle>
   Start(const orchard::fs_winfsp::MountConfig& config) override {
@@ -69,7 +250,8 @@ private:
   std::shared_ptr<FakeFactoryState> state_;
 };
 
-orchard::mount_service::MountRequest MakeMountRequest(std::wstring mount_id, std::wstring mount_point) {
+orchard::mount_service::MountRequest MakeMountRequest(std::wstring mount_id,
+                                                      std::wstring mount_point) {
   orchard::mount_service::MountRequest request;
   request.mount_id = std::move(mount_id);
   request.config.target_path = "fixture.img";
@@ -77,10 +259,30 @@ orchard::mount_service::MountRequest MakeMountRequest(std::wstring mount_id, std
   return request;
 }
 
+orchard::mount_service::KnownDeviceRecord MakeMountedCandidateDevice(std::wstring device_path,
+                                                                     const std::uint64_t object_id,
+                                                                     std::string volume_name) {
+  orchard::mount_service::KnownDeviceRecord record;
+  record.device_path = std::move(device_path);
+  record.target_info.path = record.device_path;
+  record.target_info.kind = orchard::blockio::TargetKind::kRawDevice;
+  record.target_info.probe_candidate = true;
+  record.volumes.push_back(orchard::mount_service::KnownVolumeRecord{
+      .object_id = object_id,
+      .name = std::move(volume_name),
+      .policy_action = orchard::apfs::MountDisposition::kMountReadOnly,
+      .policy_reasons = {},
+      .policy_summary = "Readable and mountable for Orchard M3 tests.",
+      .mount = std::nullopt,
+  });
+  return record;
+}
+
 void ServiceStateMachineAcceptsExpectedTransitions() {
   orchard::mount_service::ServiceStateMachine state_machine;
 
-  auto start_pending = state_machine.TransitionTo(orchard::mount_service::ServiceState::kStartPending, 2000U);
+  auto start_pending =
+      state_machine.TransitionTo(orchard::mount_service::ServiceState::kStartPending, 2000U);
   ORCHARD_TEST_REQUIRE(start_pending.ok());
   ORCHARD_TEST_REQUIRE(start_pending.value().state ==
                        orchard::mount_service::ServiceState::kStartPending);
@@ -93,7 +295,8 @@ void ServiceStateMachineAcceptsExpectedTransitions() {
   auto invalid = state_machine.TransitionTo(orchard::mount_service::ServiceState::kStartPending);
   ORCHARD_TEST_REQUIRE(!invalid.ok());
 
-  auto stop_pending = state_machine.TransitionTo(orchard::mount_service::ServiceState::kStopPending, 1500U);
+  auto stop_pending =
+      state_machine.TransitionTo(orchard::mount_service::ServiceState::kStopPending, 1500U);
   ORCHARD_TEST_REQUIRE(stop_pending.ok());
   auto stopped = state_machine.TransitionTo(orchard::mount_service::ServiceState::kStopped);
   ORCHARD_TEST_REQUIRE(stopped.ok());
@@ -101,8 +304,7 @@ void ServiceStateMachineAcceptsExpectedTransitions() {
 
 void MountRegistryRejectsDuplicateMountIdsAndMountPoints() {
   auto state = std::make_shared<FakeFactoryState>();
-  orchard::mount_service::MountRegistry registry(
-      std::make_unique<FakeMountSessionFactory>(state));
+  orchard::mount_service::MountRegistry registry(std::make_unique<FakeMountSessionFactory>(state));
 
   auto first_mount = registry.MountVolume(MakeMountRequest(L"alpha", L"R:"));
   ORCHARD_TEST_REQUIRE(first_mount.ok());
@@ -116,7 +318,8 @@ void MountRegistryRejectsDuplicateMountIdsAndMountPoints() {
   auto mounts = registry.ListMounts();
   ORCHARD_TEST_REQUIRE(mounts.size() == 1U);
 
-  auto unmount_result = registry.UnmountVolume(orchard::mount_service::UnmountRequest{.mount_id = L"alpha"});
+  auto unmount_result =
+      registry.UnmountVolume(orchard::mount_service::UnmountRequest{.mount_id = L"alpha"});
   ORCHARD_TEST_REQUIRE(unmount_result.ok());
   ORCHARD_TEST_REQUIRE(state->stop_counters.size() == 1U);
   ORCHARD_TEST_REQUIRE(*state->stop_counters.front() == 1);
@@ -130,7 +333,8 @@ void ServiceRuntimeStopIsIdempotentAndStopsMountedSessions() {
       {}, std::make_unique<FakeMountSessionFactory>(state),
       [&seen_states](const orchard::mount_service::ServiceStateSnapshot& snapshot) {
         seen_states.push_back(snapshot.state);
-      });
+      },
+      false);
 
   auto start_result = runtime.Start();
   ORCHARD_TEST_REQUIRE(start_result.ok());
@@ -146,10 +350,8 @@ void ServiceRuntimeStopIsIdempotentAndStopsMountedSessions() {
   runtime.Stop();
 
   ORCHARD_TEST_REQUIRE(!seen_states.empty());
-  ORCHARD_TEST_REQUIRE(seen_states.front() ==
-                       orchard::mount_service::ServiceState::kStartPending);
-  ORCHARD_TEST_REQUIRE(seen_states.back() ==
-                       orchard::mount_service::ServiceState::kStopped);
+  ORCHARD_TEST_REQUIRE(seen_states.front() == orchard::mount_service::ServiceState::kStartPending);
+  ORCHARD_TEST_REQUIRE(seen_states.back() == orchard::mount_service::ServiceState::kStopped);
   ORCHARD_TEST_REQUIRE(state->stop_counters.size() == 1U);
   ORCHARD_TEST_REQUIRE(*state->stop_counters.front() == 1);
 }
@@ -180,20 +382,264 @@ void ServiceHostCommandLineParsesConsoleMountOptions() {
   if (!startup_mount_optional.has_value()) {
     throw orchard_test::Failure("startup_mount was not populated.");
   }
-  const auto& startup_mount = startup_mount_optional.value();
+  const auto& startup_mount = *startup_mount_optional;
   ORCHARD_TEST_REQUIRE(startup_mount.config.mount_point == L"R:");
   const auto& selector_name_optional = startup_mount.config.selector.name;
   if (!selector_name_optional.has_value()) {
     throw orchard_test::Failure("selector.name was not populated.");
   }
-  const auto& selector_name = selector_name_optional.value();
+  const auto& selector_name = *selector_name_optional;
   ORCHARD_TEST_REQUIRE(selector_name == "Data");
   const auto& hold_timeout_optional = parse_result.value().hold_timeout_ms;
   if (!hold_timeout_optional.has_value()) {
     throw orchard_test::Failure("hold_timeout_ms was not populated.");
   }
-  const auto hold_timeout_ms = hold_timeout_optional.value();
+  const auto hold_timeout_ms = *hold_timeout_optional;
   ORCHARD_TEST_REQUIRE(hold_timeout_ms == 5000U);
+}
+
+void DeviceInventoryDiffsAddedAndRemovedPaths() {
+  orchard::mount_service::DeviceInventory inventory;
+  inventory.UpsertDevice(MakeMountedCandidateDevice(LR"(\\.\PhysicalDrive7)", 7U, "Alpha"));
+
+  const auto diff = inventory.DiffAgainst({
+      orchard::mount_service::DeviceInterfaceInfo{.device_path = LR"(\\.\PhysicalDrive8)"},
+      orchard::mount_service::DeviceInterfaceInfo{.device_path = LR"(\\.\PhysicalDrive7)"},
+  });
+
+  ORCHARD_TEST_REQUIRE(diff.added_paths.size() == 1U);
+  ORCHARD_TEST_REQUIRE(diff.added_paths.front() == LR"(\\.\PhysicalDrive8)");
+  ORCHARD_TEST_REQUIRE(diff.removed_paths.empty());
+  ORCHARD_TEST_REQUIRE(diff.retained_paths.size() == 1U);
+}
+
+void RescanCoordinatorCoalescesBurstRequests() {
+  auto poster = std::make_shared<FakePosterState>();
+  int executions = 0;
+
+  orchard::mount_service::RescanCoordinator coordinator(
+      [poster](std::function<void()> task) { return poster->Post(std::move(task)); },
+      [&executions]() { ++executions; });
+
+  coordinator.RequestRescan();
+  coordinator.RequestRescan();
+  ORCHARD_TEST_REQUIRE(poster->tasks.size() == 1U);
+
+  poster->RunAll();
+  ORCHARD_TEST_REQUIRE(executions == 2);
+}
+
+void DeviceDiscoveryManagerStartupEnumeratesAndMountsSupportedVolume() {
+  auto poster = std::make_shared<FakePosterState>();
+  auto monitor = std::make_unique<FakeDeviceMonitor>();
+  auto* monitor_ptr = monitor.get();
+  auto enumerator = std::make_unique<FakeDeviceEnumerator>(
+      std::vector<orchard::mount_service::DeviceInterfaceInfo>{
+          orchard::mount_service::DeviceInterfaceInfo{.device_path = LR"(\\.\PhysicalDrive9)"},
+      });
+  auto prober = std::make_unique<FakeDeviceProber>();
+  prober->SetResult(LR"(\\.\PhysicalDrive9)",
+                    FakeDeviceProber::ProbeEntry{
+                        .record = MakeMountedCandidateDevice(LR"(\\.\PhysicalDrive9)", 9U, "Data"),
+                        .error = std::nullopt,
+                    });
+  auto allocator = std::make_unique<FakeMountPointAllocator>();
+  allocator->PushMountPoint(L"R:");
+  FakeMountOps mount_ops;
+
+  orchard::mount_service::DeviceDiscoveryManager manager(
+      std::move(monitor), std::move(enumerator), std::move(prober), std::move(allocator),
+      orchard::mount_service::DeviceDiscoveryCallbacks{
+          .post_task =
+              [poster](std::function<void()> task) { return poster->Post(std::move(task)); },
+          .mount_volume =
+              [&mount_ops](const orchard::mount_service::MountRequest& request) {
+                return mount_ops.Mount(request);
+              },
+          .unmount_volume =
+              [&mount_ops](const orchard::mount_service::UnmountRequest& request) {
+                return mount_ops.Unmount(request);
+              },
+      });
+
+  auto start_result = manager.Start();
+  ORCHARD_TEST_REQUIRE(start_result.ok());
+  poster->RunAll();
+
+  const auto devices = manager.ListDevices();
+  ORCHARD_TEST_REQUIRE(devices.size() == 1U);
+  ORCHARD_TEST_REQUIRE(devices.front().volumes.size() == 1U);
+  const auto& mounted_volume_optional = devices.front().volumes.front().mount;
+  if (!mounted_volume_optional.has_value()) {
+    throw orchard_test::Failure("mounted volume binding was not populated.");
+  }
+  const auto& mounted_volume = *mounted_volume_optional;
+  ORCHARD_TEST_REQUIRE(mounted_volume.mount_point == L"R:");
+  ORCHARD_TEST_REQUIRE(mount_ops.mount_requests.size() == 1U);
+  ORCHARD_TEST_REQUIRE(monitor_ptr->IsTracked(LR"(\\.\PhysicalDrive9)"));
+}
+
+void DeviceDiscoveryManagerRemovalUnmountsMountedDevice() {
+  auto poster = std::make_shared<FakePosterState>();
+  auto monitor = std::make_unique<FakeDeviceMonitor>();
+  auto* monitor_ptr = monitor.get();
+  auto enumerator = std::make_unique<FakeDeviceEnumerator>(
+      std::vector<orchard::mount_service::DeviceInterfaceInfo>{
+          orchard::mount_service::DeviceInterfaceInfo{.device_path = LR"(\\.\PhysicalDrive10)"},
+      });
+  auto* enumerator_ptr = enumerator.get();
+  auto prober = std::make_unique<FakeDeviceProber>();
+  prober->SetResult(LR"(\\.\PhysicalDrive10)", FakeDeviceProber::ProbeEntry{
+                                                   .record = MakeMountedCandidateDevice(
+                                                       LR"(\\.\PhysicalDrive10)", 10U, "Detach"),
+                                                   .error = std::nullopt,
+                                               });
+  auto allocator = std::make_unique<FakeMountPointAllocator>();
+  allocator->PushMountPoint(L"R:");
+  FakeMountOps mount_ops;
+
+  orchard::mount_service::DeviceDiscoveryManager manager(
+      std::move(monitor), std::move(enumerator), std::move(prober), std::move(allocator),
+      orchard::mount_service::DeviceDiscoveryCallbacks{
+          .post_task =
+              [poster](std::function<void()> task) { return poster->Post(std::move(task)); },
+          .mount_volume =
+              [&mount_ops](const orchard::mount_service::MountRequest& request) {
+                return mount_ops.Mount(request);
+              },
+          .unmount_volume =
+              [&mount_ops](const orchard::mount_service::UnmountRequest& request) {
+                return mount_ops.Unmount(request);
+              },
+      });
+
+  auto start_result = manager.Start();
+  ORCHARD_TEST_REQUIRE(start_result.ok());
+  poster->RunAll();
+
+  enumerator_ptr->set_devices({});
+  monitor_ptr->Emit(orchard::mount_service::DeviceMonitorEvent{
+      .kind = orchard::mount_service::DeviceMonitorEventKind::kInterfaceChange,
+      .device_path = {},
+  });
+  poster->RunAll();
+
+  ORCHARD_TEST_REQUIRE(mount_ops.unmount_ids.size() == 1U);
+  ORCHARD_TEST_REQUIRE(manager.ListDevices().empty());
+  ORCHARD_TEST_REQUIRE(!monitor_ptr->IsTracked(LR"(\\.\PhysicalDrive10)"));
+}
+
+void DeviceDiscoveryManagerBurstEventsDoNotDuplicateMounts() {
+  auto poster = std::make_shared<FakePosterState>();
+  auto monitor = std::make_unique<FakeDeviceMonitor>();
+  auto* monitor_ptr = monitor.get();
+  auto enumerator = std::make_unique<FakeDeviceEnumerator>(
+      std::vector<orchard::mount_service::DeviceInterfaceInfo>{});
+  auto* enumerator_ptr = enumerator.get();
+  auto prober = std::make_unique<FakeDeviceProber>();
+  prober->SetResult(LR"(\\.\PhysicalDrive11)", FakeDeviceProber::ProbeEntry{
+                                                   .record = MakeMountedCandidateDevice(
+                                                       LR"(\\.\PhysicalDrive11)", 11U, "Burst"),
+                                                   .error = std::nullopt,
+                                               });
+  auto allocator = std::make_unique<FakeMountPointAllocator>();
+  allocator->PushMountPoint(L"R:");
+  FakeMountOps mount_ops;
+
+  orchard::mount_service::DeviceDiscoveryManager manager(
+      std::move(monitor), std::move(enumerator), std::move(prober), std::move(allocator),
+      orchard::mount_service::DeviceDiscoveryCallbacks{
+          .post_task =
+              [poster](std::function<void()> task) { return poster->Post(std::move(task)); },
+          .mount_volume =
+              [&mount_ops](const orchard::mount_service::MountRequest& request) {
+                return mount_ops.Mount(request);
+              },
+          .unmount_volume =
+              [&mount_ops](const orchard::mount_service::UnmountRequest& request) {
+                return mount_ops.Unmount(request);
+              },
+      });
+
+  auto start_result = manager.Start();
+  ORCHARD_TEST_REQUIRE(start_result.ok());
+  poster->RunAll();
+
+  enumerator_ptr->set_devices({
+      orchard::mount_service::DeviceInterfaceInfo{.device_path = LR"(\\.\PhysicalDrive11)"},
+  });
+  monitor_ptr->Emit(orchard::mount_service::DeviceMonitorEvent{
+      .kind = orchard::mount_service::DeviceMonitorEventKind::kInterfaceChange,
+      .device_path = {},
+  });
+  monitor_ptr->Emit(orchard::mount_service::DeviceMonitorEvent{
+      .kind = orchard::mount_service::DeviceMonitorEventKind::kInterfaceChange,
+      .device_path = {},
+  });
+  poster->RunAll();
+
+  ORCHARD_TEST_REQUIRE(mount_ops.mount_requests.size() == 1U);
+}
+
+void DeviceDiscoveryManagerQueryRemoveSuppresssImmediateRemountUntilFailureClearsIt() {
+  auto poster = std::make_shared<FakePosterState>();
+  auto monitor = std::make_unique<FakeDeviceMonitor>();
+  auto* monitor_ptr = monitor.get();
+  auto enumerator = std::make_unique<FakeDeviceEnumerator>(
+      std::vector<orchard::mount_service::DeviceInterfaceInfo>{
+          orchard::mount_service::DeviceInterfaceInfo{.device_path = LR"(\\.\PhysicalDrive12)"},
+      });
+  auto prober = std::make_unique<FakeDeviceProber>();
+  prober->SetResult(LR"(\\.\PhysicalDrive12)", FakeDeviceProber::ProbeEntry{
+                                                   .record = MakeMountedCandidateDevice(
+                                                       LR"(\\.\PhysicalDrive12)", 12U, "Hotplug"),
+                                                   .error = std::nullopt,
+                                               });
+  auto allocator = std::make_unique<FakeMountPointAllocator>();
+  allocator->PushMountPoint(L"R:");
+  allocator->PushMountPoint(L"S:");
+  FakeMountOps mount_ops;
+
+  orchard::mount_service::DeviceDiscoveryManager manager(
+      std::move(monitor), std::move(enumerator), std::move(prober), std::move(allocator),
+      orchard::mount_service::DeviceDiscoveryCallbacks{
+          .post_task =
+              [poster](std::function<void()> task) { return poster->Post(std::move(task)); },
+          .mount_volume =
+              [&mount_ops](const orchard::mount_service::MountRequest& request) {
+                return mount_ops.Mount(request);
+              },
+          .unmount_volume =
+              [&mount_ops](const orchard::mount_service::UnmountRequest& request) {
+                return mount_ops.Unmount(request);
+              },
+      });
+
+  auto start_result = manager.Start();
+  ORCHARD_TEST_REQUIRE(start_result.ok());
+  poster->RunAll();
+
+  monitor_ptr->Emit(orchard::mount_service::DeviceMonitorEvent{
+      .kind = orchard::mount_service::DeviceMonitorEventKind::kMountedDeviceQueryRemove,
+      .device_path = LR"(\\.\PhysicalDrive12)",
+  });
+  poster->RunAll();
+
+  auto devices = manager.ListDevices();
+  ORCHARD_TEST_REQUIRE(devices.size() == 1U);
+  ORCHARD_TEST_REQUIRE(!devices.front().volumes.front().mount.has_value());
+  ORCHARD_TEST_REQUIRE(mount_ops.mount_requests.size() == 1U);
+  ORCHARD_TEST_REQUIRE(mount_ops.unmount_ids.size() == 1U);
+
+  monitor_ptr->Emit(orchard::mount_service::DeviceMonitorEvent{
+      .kind = orchard::mount_service::DeviceMonitorEventKind::kMountedDeviceQueryRemoveFailed,
+      .device_path = LR"(\\.\PhysicalDrive12)",
+  });
+  poster->RunAll();
+
+  devices = manager.ListDevices();
+  ORCHARD_TEST_REQUIRE(devices.front().volumes.front().mount.has_value());
+  ORCHARD_TEST_REQUIRE(mount_ops.mount_requests.size() == 2U);
 }
 
 } // namespace
@@ -208,5 +654,15 @@ int main() {
        &ServiceRuntimeStopIsIdempotentAndStopsMountedSessions},
       {"ServiceHostCommandLineParsesConsoleMountOptions",
        &ServiceHostCommandLineParsesConsoleMountOptions},
+      {"DeviceInventoryDiffsAddedAndRemovedPaths", &DeviceInventoryDiffsAddedAndRemovedPaths},
+      {"RescanCoordinatorCoalescesBurstRequests", &RescanCoordinatorCoalescesBurstRequests},
+      {"DeviceDiscoveryManagerStartupEnumeratesAndMountsSupportedVolume",
+       &DeviceDiscoveryManagerStartupEnumeratesAndMountsSupportedVolume},
+      {"DeviceDiscoveryManagerRemovalUnmountsMountedDevice",
+       &DeviceDiscoveryManagerRemovalUnmountsMountedDevice},
+      {"DeviceDiscoveryManagerBurstEventsDoNotDuplicateMounts",
+       &DeviceDiscoveryManagerBurstEventsDoNotDuplicateMounts},
+      {"DeviceDiscoveryManagerQueryRemoveSuppresssImmediateRemountUntilFailureClearsIt",
+       &DeviceDiscoveryManagerQueryRemoveSuppresssImmediateRemountUntilFailureClearsIt},
   });
 }

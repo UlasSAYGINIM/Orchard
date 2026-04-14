@@ -8,10 +8,11 @@
 #include <queue>
 #include <string_view>
 #include <thread>
-#include <vector>
 #include <variant>
+#include <vector>
 
 #include "orchard/blockio/result.h"
+#include "orchard/mount_service/device_discovery.h"
 #include "orchard/mount_service/mount_registry.h"
 #include "orchard/mount_service/service_state.h"
 #include "orchard/mount_service/types.h"
@@ -22,10 +23,10 @@ using ServiceStateCallback = std::function<void(const ServiceStateSnapshot&)>;
 
 class ServiceRuntime {
 public:
-  explicit ServiceRuntime(ServiceConfig config = {},
-                          std::unique_ptr<MountSessionFactory> factory =
-                              CreateDefaultMountSessionFactory(),
-                          ServiceStateCallback state_callback = {});
+  explicit ServiceRuntime(
+      ServiceConfig config = {},
+      std::unique_ptr<MountSessionFactory> factory = CreateDefaultMountSessionFactory(),
+      ServiceStateCallback state_callback = {}, bool enable_device_discovery = true);
   ~ServiceRuntime();
 
   ServiceRuntime(const ServiceRuntime&) = delete;
@@ -46,16 +47,19 @@ public:
   [[nodiscard]] std::uint32_t WaitForStopSignal(std::uint32_t timeout_ms) const noexcept;
 
 private:
+  [[nodiscard]] bool PostCommand(std::function<void()> command);
   void WorkerLoop() noexcept;
   void EmitState(ServiceStateSnapshot snapshot) const;
-  [[nodiscard]] blockio::Result<ServiceStateSnapshot>
-  TransitionState(ServiceState next_state, std::uint32_t wait_hint_ms);
+  [[nodiscard]] blockio::Result<ServiceStateSnapshot> TransitionState(ServiceState next_state,
+                                                                      std::uint32_t wait_hint_ms);
   [[nodiscard]] bool IsRunning() const noexcept;
 
   ServiceConfig config_;
   MountRegistry registry_;
   ServiceStateMachine state_machine_;
   ServiceStateCallback state_callback_;
+  bool enable_device_discovery_ = true;
+  std::unique_ptr<DeviceDiscoveryManager> device_discovery_manager_;
 
   void* stop_event_ = nullptr;
 

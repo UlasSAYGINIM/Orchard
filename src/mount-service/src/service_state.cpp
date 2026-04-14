@@ -59,10 +59,10 @@ std::string_view ToString(const ServiceState state) noexcept {
 blockio::Result<ServiceStateSnapshot>
 ServiceStateMachine::TransitionTo(const ServiceState next_state, const std::uint32_t wait_hint_ms) {
   if (!IsValidTransition(snapshot_.state, next_state)) {
-    return MakeMountServiceError(
-        blockio::ErrorCode::kInvalidArgument,
-        "Invalid Orchard service-state transition from '" + std::string(ToString(snapshot_.state)) +
-            "' to '" + std::string(ToString(next_state)) + "'.");
+    return MakeMountServiceError(blockio::ErrorCode::kInvalidArgument,
+                                 "Invalid Orchard service-state transition from '" +
+                                     std::string(ToString(snapshot_.state)) + "' to '" +
+                                     std::string(ToString(next_state)) + "'.");
   }
 
   const auto previous_state = snapshot_.state;

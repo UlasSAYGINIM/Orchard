@@ -46,7 +46,8 @@ public:
   ScopedScHandle(const ScopedScHandle&) = delete;
   ScopedScHandle& operator=(const ScopedScHandle&) = delete;
 
-  ScopedScHandle(ScopedScHandle&& other) noexcept : handle_(std::exchange(other.handle_, nullptr)) {}
+  ScopedScHandle(ScopedScHandle&& other) noexcept
+      : handle_(std::exchange(other.handle_, nullptr)) {}
   ScopedScHandle& operator=(ScopedScHandle&& other) noexcept {
     if (this != &other) {
       if (handle_ != nullptr) {
@@ -93,7 +94,8 @@ struct WaitForServiceStateRequest {
   }
 }
 
-[[nodiscard]] blockio::Result<std::wstring> ParseWideArgument(const ParseWideArgumentRequest& request) {
+[[nodiscard]] blockio::Result<std::wstring>
+ParseWideArgument(const ParseWideArgumentRequest& request) {
   auto wide_result = orchard::fs_winfsp::Utf8ToWide(request.text);
   if (!wide_result.ok()) {
     return MakeMountServiceError(blockio::ErrorCode::kInvalidArgument,
@@ -148,8 +150,7 @@ struct WaitForServiceStateRequest {
       binary_path_result.value().c_str(), nullptr, nullptr, nullptr, nullptr, nullptr));
   if (!service) {
     return MakeMountServiceError(blockio::ErrorCode::kOpenFailed,
-                                 "Failed to create the Orchard Windows service.",
-                                 ::GetLastError());
+                                 "Failed to create the Orchard Windows service.", ::GetLastError());
   }
 
   SERVICE_DESCRIPTIONW description{
@@ -171,9 +172,8 @@ WaitForServiceState(const SC_HANDLE service, const WaitForServiceStateRequest& r
   DWORD bytes_needed = 0;
 
   while (::GetTickCount64() <= deadline) {
-    if (!::QueryServiceStatusEx(service, SC_STATUS_PROCESS_INFO,
-                                reinterpret_cast<LPBYTE>(&status), sizeof(status),
-                                &bytes_needed)) {
+    if (!::QueryServiceStatusEx(service, SC_STATUS_PROCESS_INFO, reinterpret_cast<LPBYTE>(&status),
+                                sizeof(status), &bytes_needed)) {
       return MakeMountServiceError(blockio::ErrorCode::kOpenFailed,
                                    "Failed to query Orchard service status.", ::GetLastError());
     }
@@ -192,14 +192,13 @@ WaitForServiceState(const SC_HANDLE service, const WaitForServiceStateRequest& r
 [[nodiscard]] blockio::Result<std::monostate> UninstallServiceBinary(const ServiceConfig& config) {
   ScopedScHandle service_manager(::OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT));
   if (!service_manager) {
-    return MakeMountServiceError(blockio::ErrorCode::kAccessDenied,
-                                 "Failed to open the Windows Service Control Manager for uninstall.",
-                                 ::GetLastError());
+    return MakeMountServiceError(
+        blockio::ErrorCode::kAccessDenied,
+        "Failed to open the Windows Service Control Manager for uninstall.", ::GetLastError());
   }
 
-  ScopedScHandle service(
-      ::OpenServiceW(service_manager.get(), config.service_name.c_str(),
-                     SERVICE_STOP | SERVICE_QUERY_STATUS | DELETE));
+  ScopedScHandle service(::OpenServiceW(service_manager.get(), config.service_name.c_str(),
+                                        SERVICE_STOP | SERVICE_QUERY_STATUS | DELETE));
   if (!service) {
     return MakeMountServiceError(blockio::ErrorCode::kNotFound,
                                  "The Orchard Windows service is not installed.", ::GetLastError());
@@ -207,11 +206,10 @@ WaitForServiceState(const SC_HANDLE service, const WaitForServiceStateRequest& r
 
   SERVICE_STATUS status{};
   if (::ControlService(service.get(), SERVICE_CONTROL_STOP, &status)) {
-    auto stopped_result = WaitForServiceState(
-        service.get(), WaitForServiceStateRequest{
-                           .expected_state = SERVICE_STOPPED,
-                           .timeout_ms = 15000U,
-                       });
+    auto stopped_result = WaitForServiceState(service.get(), WaitForServiceStateRequest{
+                                                                 .expected_state = SERVICE_STOPPED,
+                                                                 .timeout_ms = 15000U,
+                                                             });
     if (!stopped_result.ok()) {
       return stopped_result.error();
     }
@@ -219,8 +217,7 @@ WaitForServiceState(const SC_HANDLE service, const WaitForServiceStateRequest& r
 
   if (!::DeleteService(service.get())) {
     return MakeMountServiceError(blockio::ErrorCode::kOpenFailed,
-                                 "Failed to delete the Orchard Windows service.",
-                                 ::GetLastError());
+                                 "Failed to delete the Orchard Windows service.", ::GetLastError());
   }
 
   return std::monostate{};
@@ -286,9 +283,8 @@ private:
     (void)argc;
     (void)argv;
 
-    status_handle_ = ::RegisterServiceCtrlHandlerExW(config_.service_name.c_str(),
-                                                     &WindowsServiceHost::ControlHandlerThunk,
-                                                     this);
+    status_handle_ = ::RegisterServiceCtrlHandlerExW(
+        config_.service_name.c_str(), &WindowsServiceHost::ControlHandlerThunk, this);
     if (status_handle_ == nullptr) {
       exit_code_ = 1;
       return;

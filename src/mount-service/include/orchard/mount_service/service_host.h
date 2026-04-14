@@ -23,7 +23,8 @@ struct ServiceHostOptions {
   std::optional<std::wstring> shutdown_event_name;
 };
 
-[[nodiscard]] blockio::Result<ServiceHostOptions> ParseServiceHostCommandLine(int argc, char** argv);
+[[nodiscard]] blockio::Result<ServiceHostOptions> ParseServiceHostCommandLine(int argc,
+                                                                              char** argv);
 int RunServiceHost(const ServiceHostOptions& options);
 
 } // namespace orchard::mount_service

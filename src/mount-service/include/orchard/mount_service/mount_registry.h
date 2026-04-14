@@ -5,8 +5,8 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
-#include <vector>
 #include <variant>
+#include <vector>
 
 #include "orchard/blockio/result.h"
 #include "orchard/fs_winfsp/types.h"
@@ -39,7 +39,8 @@ std::unique_ptr<MountSessionFactory> CreateDefaultMountSessionFactory();
 
 class MountRegistry {
 public:
-  explicit MountRegistry(std::unique_ptr<MountSessionFactory> factory = CreateDefaultMountSessionFactory());
+  explicit MountRegistry(
+      std::unique_ptr<MountSessionFactory> factory = CreateDefaultMountSessionFactory());
 
   [[nodiscard]] blockio::Result<MountedSessionRecord> MountVolume(const MountRequest& request);
   [[nodiscard]] blockio::Result<MountedSessionRecord> GetMount(std::wstring_view mount_id) const;

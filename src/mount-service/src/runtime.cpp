@@ -47,9 +47,11 @@ template <typename T> blockio::Result<T> UnwrapAsyncResult(AsyncResult<T> wrappe
 } // namespace
 
 ServiceRuntime::ServiceRuntime(ServiceConfig config, std::unique_ptr<MountSessionFactory> factory,
-                               ServiceStateCallback state_callback)
+                               ServiceStateCallback state_callback,
+                               const bool enable_device_discovery)
     : config_(std::move(config)), registry_(std::move(factory)),
-      state_callback_(std::move(state_callback)) {}
+      state_callback_(std::move(state_callback)),
+      enable_device_discovery_(enable_device_discovery) {}
 
 ServiceRuntime::~ServiceRuntime() {
   Stop();
@@ -76,14 +78,27 @@ bool ServiceRuntime::IsRunning() const noexcept {
   return state_machine_.snapshot().state == ServiceState::kRunning;
 }
 
+bool ServiceRuntime::PostCommand(std::function<void()> command) {
+  {
+    std::scoped_lock lock(queue_mutex_);
+    if (worker_exit_requested_) {
+      return false;
+    }
+
+    commands_.push(std::move(command));
+  }
+
+  queue_condition_.notify_one();
+  return true;
+}
+
 void ServiceRuntime::WorkerLoop() noexcept {
   for (;;) {
     std::function<void()> command;
     {
       std::unique_lock lock(queue_mutex_);
-      queue_condition_.wait(lock, [this]() noexcept {
-        return worker_exit_requested_ || !commands_.empty();
-      });
+      queue_condition_.wait(
+          lock, [this]() noexcept { return worker_exit_requested_ || !commands_.empty(); });
 
       if (worker_exit_requested_ && commands_.empty()) {
         break;
@@ -129,6 +144,31 @@ blockio::Result<std::monostate> ServiceRuntime::Start() {
   }
 
   worker_thread_ = std::thread([this]() noexcept { WorkerLoop(); });
+
+  if (enable_device_discovery_) {
+    device_discovery_manager_ = CreateDefaultDeviceDiscoveryManager(DeviceDiscoveryCallbacks{
+        .post_task =
+            [this](std::function<void()> command) { return PostCommand(std::move(command)); },
+        .mount_volume =
+            [this](const MountRequest& request) { return registry_.MountVolume(request); },
+        .unmount_volume =
+            [this](const UnmountRequest& request) { return registry_.UnmountVolume(request); },
+    });
+
+    auto discovery_start_result = device_discovery_manager_->Start();
+    if (!discovery_start_result.ok()) {
+      device_discovery_manager_.reset();
+      {
+        std::scoped_lock lock(queue_mutex_);
+        worker_exit_requested_ = true;
+      }
+      queue_condition_.notify_all();
+      if (worker_thread_.joinable()) {
+        worker_thread_.join();
+      }
+      return discovery_start_result.error();
+    }
+  }
 
   auto running_result = TransitionState(ServiceState::kRunning, 0U);
   if (!running_result.ok()) {
@@ -184,6 +224,11 @@ void ServiceRuntime::Stop() noexcept {
 
   RequestStop();
 
+  if (device_discovery_manager_) {
+    device_discovery_manager_->Shutdown();
+    device_discovery_manager_.reset();
+  }
+
   {
     std::scoped_lock lock(queue_mutex_);
     worker_exit_requested_ = true;
@@ -216,18 +261,13 @@ blockio::Result<MountedSessionRecord> ServiceRuntime::MountVolume(const MountReq
   auto future = promise->get_future();
 
   {
-    std::scoped_lock lock(queue_mutex_);
-    if (worker_exit_requested_) {
+    if (!PostCommand([this, request, promise]() mutable {
+          promise->set_value(WrapAsyncResult(registry_.MountVolume(request)));
+        })) {
       return MakeMountServiceError(blockio::ErrorCode::kAccessDenied,
                                    "The Orchard service runtime is stopping.");
     }
-
-    commands_.push([this, request, promise]() mutable {
-      promise->set_value(WrapAsyncResult(registry_.MountVolume(request)));
-    });
   }
-
-  queue_condition_.notify_one();
   return UnwrapAsyncResult(future.get());
 }
 
@@ -241,18 +281,13 @@ blockio::Result<std::monostate> ServiceRuntime::UnmountVolume(const UnmountReque
   auto future = promise->get_future();
 
   {
-    std::scoped_lock lock(queue_mutex_);
-    if (worker_exit_requested_) {
+    if (!PostCommand([this, request, promise]() mutable {
+          promise->set_value(WrapAsyncResult(registry_.UnmountVolume(request)));
+        })) {
       return MakeMountServiceError(blockio::ErrorCode::kAccessDenied,
                                    "The Orchard service runtime is stopping.");
     }
-
-    commands_.push([this, request, promise]() mutable {
-      promise->set_value(WrapAsyncResult(registry_.UnmountVolume(request)));
-    });
   }
-
-  queue_condition_.notify_one();
   return UnwrapAsyncResult(future.get());
 }
 
@@ -266,19 +301,14 @@ blockio::Result<std::vector<MountedSessionRecord>> ServiceRuntime::ListMounts() 
   auto future = promise->get_future();
 
   {
-    std::scoped_lock lock(queue_mutex_);
-    if (worker_exit_requested_) {
+    if (!PostCommand([this, promise]() mutable {
+          promise->set_value(WrapAsyncResult(
+              blockio::Result<std::vector<MountedSessionRecord>>(registry_.ListMounts())));
+        })) {
       return MakeMountServiceError(blockio::ErrorCode::kAccessDenied,
                                    "The Orchard service runtime is stopping.");
     }
-
-    commands_.push([this, promise]() mutable {
-      promise->set_value(
-          WrapAsyncResult(blockio::Result<std::vector<MountedSessionRecord>>(registry_.ListMounts())));
-    });
   }
-
-  queue_condition_.notify_one();
   return UnwrapAsyncResult(future.get());
 }
 

@@ -460,6 +460,7 @@ A task is only `Done` when all apply:
 
 - Review date: `2026-04-13`
 - Locally completed: `M3-T01`
+- Active implementation: `M3-T02`
 - Latest local verification:
   - `cmake --build --preset default --parallel`
   - `cmake --build --preset default --target orchard_format_check`
@@ -467,7 +468,7 @@ A task is only `Done` when all apply:
   - `ctest --preset default --output-on-failure`
   - `tools/dev/orchard-service-console-smoke.ps1`
   - `tools/dev/orchard-service-smoke.ps1` from an elevated shell
-  - Result: `12/12 tests passed`, `clang-format check passed`, `clang-tidy passed`, the console-host smoke mounted `plain-user-data.img`, validated `alpha.txt` plus the nested note, and exited cleanly, and the elevated SCM smoke installed a temporary service, observed `Running`, stopped it, and uninstalled it cleanly with final status `stopped_after_smoke`
+  - Result: `12/12 tests passed`, `clang-format check passed`, `clang-tidy passed for 43 translation unit(s)`, the console-host smoke mounted `plain-user-data.img`, validated `alpha.txt` plus the nested note, and exited cleanly, the elevated SCM smoke installed a temporary service, observed `Running`, stopped it, and uninstalled it cleanly with final status `stopped_after_smoke`, and the new fake-driven `orchard_unit_mount_service` coverage exercised startup enumeration, removal cleanup, burst-event coalescing, and query-remove suppression for `M3-T02`
 
 ### Tasks
 
@@ -479,10 +480,11 @@ A task is only `Done` when all apply:
   Evidence: `src/mount-service/` is now a real service-host implementation rather than a placeholder, split across `service_host`, `runtime`, `mount_registry`, `service_state`, and `types`; `src/mount-service/src/main.cpp` now builds `orchard-service-host.exe` with `--console`, `--install`, and `--uninstall` entry points; `tests/unit/mount_service_tests.cpp` covers service-state transitions, duplicate mount rejection, runtime stop idempotence, and console command-line parsing; `tools/dev/orchard-service-console-smoke.ps1` validates the console-host runtime by mounting `tests/corpus/samples/plain-user-data.img`, reading the mounted contents, and requesting graceful shutdown through a named event; `src/CMakeLists.txt` now configures `fs-winfsp` before `mount-service`, and `src/mount-service/CMakeLists.txt` now copies `winfsp-x64.dll` beside `orchard-service-host.exe`, fixing the local loader failure shown by `winfsp-x64.dll was not found`; `tools/dev/orchard-service-smoke.ps1` now uses `System.Diagnostics.Stopwatch` for portable timeout handling; local verification passed with `cmake --build --preset default --parallel`, `cmake --build --preset default --target orchard_format_check`, `cmake --build --preset default --target orchard_lint`, `ctest --preset default --output-on-failure`, `tools/dev/orchard-service-console-smoke.ps1`, and an elevated `tools/dev/orchard-service-smoke.ps1` run that installed `OrchardSmoke-5d834718`, observed `Running`, stopped the service, and returned final status `stopped_after_smoke`.
 
 - [ ] `M3-T02` Device arrival and removal detection
-  Status: `Planned`
+  Status: `In Progress`
   Depends on: `M3-T01`
   Done when: Service detects supported disk attach/detach events and rescans appropriately.
-  Verification: Plug/unplug scenario tests.
+  Verification: Fake-driven reconcile tests plus real plug/unplug scenario tests.
+  Evidence: `src/mount-service/include/orchard/mount_service/device_monitor.h`, `device_enumerator.h`, `device_inventory.h`, `rescan_coordinator.h`, and `device_discovery.h` now define the device-discovery layer for the service runtime; the matching `.cpp` files under `src/mount-service/src/` now register `CM_Register_Notification` callbacks for `GUID_DEVINTERFACE_DISK`, enumerate present disks through `CM_Get_Device_Interface_ListW`, resolve those interfaces to `\\.\PhysicalDriveN` via `IOCTL_STORAGE_GET_DEVICE_NUMBER`, coalesce hotplug bursts onto the runtime worker queue, diff a persistent device inventory, probe candidates through the existing APFS discovery/policy path, mount auto-mountable volumes through the runtime registry callbacks, and unmount tracked sessions on removal/query-remove; `src/mount-service/src/runtime.cpp` now owns the `DeviceDiscoveryManager` lifecycle so discovery starts with the service and shuts down before worker teardown; `tests/unit/mount_service_tests.cpp` now covers inventory diffing, rescan coalescing, startup enumeration and auto-mount, device removal cleanup, duplicate burst handling, and query-remove suppression until query-remove-failed clears it; local verification passed with `cmake --build --preset default --parallel`, `cmake --build --preset default --target orchard_format_check`, `cmake --build --preset default --target orchard_lint`, and `ctest --preset default --output-on-failure`. Real hardware plug/unplug smoke is still required before this task can move to `Done`.
 
 - [ ] `M3-T03` Drive-letter persistence
   Status: `Planned`
@@ -775,4 +777,5 @@ Start here once implementation begins:
 - [x] `NOW-15` Start `M2-T04` symlink and hard-link read behavior on top of the hardened read-only mount path
 - [x] `NOW-16` Start `M2-T05` read-only mount stress baseline on top of the completed link-aware read path
 - [x] `NOW-17` Finish `M3-T01` by running the SCM-backed service smoke from an elevated shell and recording the result
-- [ ] `NOW-18` Start `M3-T02` device arrival and removal detection on top of the completed service host
+- [x] `NOW-18` Start `M3-T02` device arrival and removal detection on top of the completed service host
+- [ ] `NOW-19` Run real hardware plug/unplug smoke for `M3-T02` and record the result

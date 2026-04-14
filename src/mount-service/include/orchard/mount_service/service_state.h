@@ -30,8 +30,8 @@ public:
     return snapshot_;
   }
 
-  [[nodiscard]] blockio::Result<ServiceStateSnapshot>
-  TransitionTo(ServiceState next_state, std::uint32_t wait_hint_ms = 0);
+  [[nodiscard]] blockio::Result<ServiceStateSnapshot> TransitionTo(ServiceState next_state,
+                                                                   std::uint32_t wait_hint_ms = 0);
 
 private:
   ServiceStateSnapshot snapshot_;

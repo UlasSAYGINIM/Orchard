@@ -12,8 +12,7 @@ namespace {
 class WinFspManagedMountSession final : public ManagedMountSession {
 public:
   explicit WinFspManagedMountSession(orchard::fs_winfsp::MountSessionHandle session)
-      : session_(std::move(session)),
-        mount_point_(session_->mount_point()),
+      : session_(std::move(session)), mount_point_(session_->mount_point()),
         volume_label_(session_->mounted_volume().volume_label()),
         volume_object_id_(session_->mounted_volume().volume_info().object_id),
         volume_name_(session_->mounted_volume().volume_info().name) {}
@@ -146,23 +145,25 @@ blockio::Result<MountedSessionRecord> MountRegistry::MountVolume(const MountRequ
     }
 
     const auto mount_point_key = NormalizeMountPointKey(record.mount_point);
-    if (mounts_by_id_.contains(record.mount_id) || mount_id_by_mount_point_.contains(mount_point_key)) {
+    if (mounts_by_id_.contains(record.mount_id) ||
+        mount_id_by_mount_point_.contains(mount_point_key)) {
       session_result.value()->Stop();
       return MakeMountServiceError(blockio::ErrorCode::kInvalidArgument,
                                    "The requested mount identity became active while mounting.");
     }
 
     mounts_by_id_.emplace(record.mount_id, ActiveMount{
-                                              .record = record,
-                                              .session = std::move(session_result.value()),
-                                          });
+                                               .record = record,
+                                               .session = std::move(session_result.value()),
+                                           });
     mount_id_by_mount_point_.emplace(mount_point_key, record.mount_id);
   }
 
   return record;
 }
 
-blockio::Result<MountedSessionRecord> MountRegistry::GetMount(const std::wstring_view mount_id) const {
+blockio::Result<MountedSessionRecord>
+MountRegistry::GetMount(const std::wstring_view mount_id) const {
   std::scoped_lock lock(mutex_);
   const auto found = mounts_by_id_.find(std::wstring(mount_id));
   if (found == mounts_by_id_.end()) {
@@ -183,10 +184,10 @@ std::vector<MountedSessionRecord> MountRegistry::ListMounts() const {
     mounts.push_back(active_mount.record);
   }
 
-  std::sort(mounts.begin(), mounts.end(), [](const MountedSessionRecord& left,
-                                             const MountedSessionRecord& right) {
-    return left.mount_id < right.mount_id;
-  });
+  std::sort(mounts.begin(), mounts.end(),
+            [](const MountedSessionRecord& left, const MountedSessionRecord& right) {
+              return left.mount_id < right.mount_id;
+            });
   return mounts;
 }
 
